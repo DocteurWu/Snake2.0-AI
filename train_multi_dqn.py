@@ -4,7 +4,8 @@
  SNAKE IA — Entraînement DQN avec Graphe Optimisé (Double Buffer) & Sélecteur
 =============================================================================
  Interface légère avec sélecteur discret "[ ] Endless" pour basculer de mode.
- Rendu graphique optimisé sur image en cache pour éviter les chutes de framerate.
+ Masque le curseur de rendu visuel en mode Endless.
+ Vitesse d'arrière-plan débridée par défaut.
 =============================================================================
 """
 
@@ -139,7 +140,7 @@ en_cours = True
 vitesse_reelle_bg = 0
 dernier_score_temps = 0
 mode_plein_ecran_graphe = True
-rafraichir_graphe = True # Flag pour recalculer l'image du graphe uniquement si nécessaire
+rafraichir_graphe = True
 
 def thread_entrainement_background(agent, slider_bg):
     global scores_train, moyennes_train, en_pause, en_cours, vitesse_reelle_bg, dernier_score_temps, rafraichir_graphe
@@ -187,7 +188,7 @@ def thread_entrainement_background(agent, slider_bg):
                 moyennes_train.append(sum(liste_scores_recents) / len(liste_scores_recents))
                 
                 dernier_score_temps = time.time()
-                rafraichir_graphe = True # Demander la reconstruction du graphe au thread principal
+                rafraichir_graphe = True
                 
                 etats[idx] = jeux_invisibles[idx].reset()
                 with lock_modele:
@@ -214,7 +215,6 @@ def thread_entrainement_background(agent, slider_bg):
 cache_surface_graphe = None
 
 def generer_rendu_graphe(large, haut, scores, moyennes):
-    """Dessine le graphe brut sur une surface hors-écran dédiée (mise en cache)."""
     g_surf = pygame.Surface((large, haut))
     g_surf.fill((20, 20, 20))
     pygame.draw.rect(g_surf, BLEU, (0, 0, large, haut), 3)
@@ -224,6 +224,7 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
     margin_x = 60
     margin_y = 50
     g_w = large - margin_x - 40
+    # Laisser de la place pour les sliders en haut
     g_h = haut - margin_y - 170
     
     base_y = haut - margin_y
@@ -261,7 +262,7 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
         pygame.draw.lines(g_surf, (80, 80, 80), False, pts_scores, 1)
         pygame.draw.lines(g_surf, VERT_CLAIR, False, pts_moyennes, 2)
         
-    # Infos
+    # Stats décalées dynamiquement à droite
     lbl_max = police.render(f"Meilleur score : {max_score}", True, ROUGE)
     lbl_avg = police.render(f"Moyenne (100) : {moyennes[-1]:.1f}", True, VERT_CLAIR)
     lbl_partie = police.render(f"Episodes : {len(scores)}", True, BLANC)
@@ -274,40 +275,38 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
 
 
 def dessiner_interface_graphe(surface, slider_bg, slider_vis, large, haut):
-    """Affiche le graphe en cache et ajoute la surbrillance dynamique du dernier point."""
     global cache_surface_graphe, rafraichir_graphe
     
-    # 1. Régénérer le cache du graphe si nécessaire (mort de serpent ou changement de taille)
     if cache_surface_graphe is None or rafraichir_graphe or cache_surface_graphe.get_size() != (large, haut):
         cache_surface_graphe = generer_rendu_graphe(large, haut, scores_train, moyennes_train)
         rafraichir_graphe = False
         
-    # Coller le fond du graphe mis en cache
     surface.blit(cache_surface_graphe, (0, 0))
     
-    # 2. Dessiner les éléments interactifs par-dessus (pas mis en cache car ils bougent)
+    # 1. Dessiner le Slider Train BG
     slider_bg.draw(surface)
-    slider_vis.draw(surface)
     
-    # Dessiner la checkbox Endless discrète
+    # 2. Dessiner le Slider Rendu Visuel UNIQUEMENT en mode démo (non Endless)
+    if not mode_plein_ecran_graphe:
+        slider_vis.draw(surface)
+    
+    # 3. Dessiner la checkbox Endless
     police = pygame.font.SysFont('arial', 13, bold=True)
-    # Fond de la checkbox
     checkbox_rect = pygame.Rect(30, 15, 16, 16)
     pygame.draw.rect(surface, GRIS, checkbox_rect, border_radius=3)
     if mode_plein_ecran_graphe:
-        # Remplir en bleu/vert si coché
         pygame.draw.rect(surface, VERT_CLAIR, (34, 19, 8, 8), border_radius=1)
     pygame.draw.rect(surface, BLANC, checkbox_rect, 1, border_radius=3)
     
     surface.blit(police.render("Endless", True, BLANC), (54, 15))
     
-    # Statut
+    # Statut (décalé pour éviter les chevauchements de textes)
     police_statut = pygame.font.SysFont('arial', 12)
     statut_txt = "STATUT : PAUSE [ESPACE]" if en_pause else f"VITESSE : {vitesse_reelle_bg} steps/s"
     couleur_statut = ROUGE if en_pause else VERT_CLAIR
     surface.blit(police_statut.render(statut_txt, True, couleur_statut), (130, 16))
 
-    # 3. Dessiner l'effet de flash sur le dernier point (si le graphe contient des points)
+    # 4. Effet de flash
     if len(scores_train) > 0:
         margin_x = 60
         margin_y = 50
@@ -317,11 +316,9 @@ def dessiner_interface_graphe(surface, slider_bg, slider_vis, large, haut):
         
         max_score = max(max(scores_train), 1)
         
-        # Position du dernier point
         dernier_pt_x = margin_x + g_w
         dernier_pt_y = base_y - int((scores_train[-1] / max_score) * g_h)
         
-        # Animation
         t_ecoule = time.time() - dernier_score_temps
         if t_ecoule < 0.25:
             rayon_flash = int(14 * (1.0 - t_ecoule / 0.25))
@@ -349,9 +346,11 @@ def main():
     rect_plein_ecran = pygame.Rect(0, 0, LARGEUR_FENETRE, HAUTEUR_FENETRE)
     surface_plein_ecran = fenetre_globale.subsurface(rect_plein_ecran)
     
-    # Sliders repositionnés proprement
+    # Train BG débridé (MAX) par défaut
     slider_bg = Slider(30, 50, 240, 8, 10, 2000, 2000, titre="Train BG")
     slider_bg.mode_max = True
+    slider_bg.valeur = slider_bg.max
+    slider_bg.update_bouton_pos()
     
     slider_vis = Slider(30, 90, 240, 8, 5, 120, 20, titre="Rendu Visuel")
     
@@ -372,12 +371,11 @@ def main():
     )
     thread_bg.start()
     
-    print("\nSimulation démarrée (Rendu double-buffer optimisé) !")
+    print("\nSimulation démarrée (Train BG débridé par défaut) !")
     
     while en_cours:
         fps_visual = int(slider_vis.valeur)
         
-        # Positionnement des offsets de clic
         if mode_plein_ecran_graphe:
             offset_x, offset_y = 0, 0
         else:
@@ -397,18 +395,18 @@ def main():
                         agent.sauvegarder()
             
             slider_bg.handle_event(event, offset_x, offset_y)
-            slider_vis.handle_event(event, offset_x, offset_y)
+            if not mode_plein_ecran_graphe:
+                slider_vis.handle_event(event, offset_x, offset_y)
             
-            # Gestion du clic sur la checkbox "Endless"
+            # Checkbox Endless
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 pos = (event.pos[0] - offset_x, event.pos[1] - offset_y)
-                # Zone de la Checkbox (30, 15) à (120, 31) incluant le texte
                 if 30 <= pos[0] <= 120 and 12 <= pos[1] <= 32:
                     mode_plein_ecran_graphe = not mode_plein_ecran_graphe
                     rafraichir_graphe = True
                     fenetre_globale.fill(NOIR)
 
-        # 1. Rendu Démo (uniquement si NON-Endless)
+        # Rendu Démo
         if not mode_plein_ecran_graphe and not en_pause:
             for idx, jeu in enumerate(jeux_demo):
                 with lock_modele:
@@ -419,7 +417,7 @@ def main():
                 if termine:
                     etats_demo[idx] = jeu.reset()
 
-        # 2. Rendu Interface Graphe & Sliders
+        # Rendu Interface
         if mode_plein_ecran_graphe:
             dessiner_interface_graphe(surface_plein_ecran, slider_bg, slider_vis, LARGEUR_FENETRE, HAUTEUR_FENETRE)
         else:
@@ -427,9 +425,6 @@ def main():
             
         pygame.display.flip()
         
-        # Le taux de rafraîchissement visuel du thread principal est régulé à 30 FPS en mode Graphe Plein écran.
-        # Cela évite de consommer le CPU en appels de rafraîchissement d'affichage inutiles, tout en gardant 
-        # le thread de background à pleine puissance en tâche de fond.
         if mode_plein_ecran_graphe:
             horloge.tick(30)
         else:
