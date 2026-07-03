@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
- SNAKE IA — Entraînement DQN avec Graphe Optimisé (Double Buffer) & Sélecteur
+ SNAKE IA — Entraînement DQN avec Graphe Lumineux Progressif (Points & Halos)
 =============================================================================
- Interface légère avec sélecteur discret "[ ] Endless" pour basculer de mode.
- Masque le curseur de rendu visuel en mode Endless.
- Vitesse d'arrière-plan débridée par défaut.
+ Affiche chaque point de score individuellement sur le graphe.
+ Applique un effet d'illumination progressif (halo dynamique) aux points
+ les plus récents lors de leur apparition.
 =============================================================================
 """
 
@@ -135,15 +135,17 @@ class Slider:
 # Variables partagées
 scores_train = []
 moyennes_train = []
+# Stockage des timestamps de création des points récents pour animer l'effet d'illumination progressive
+timestamps_points_recents = []
+
 en_pause = False
 en_cours = True
 vitesse_reelle_bg = 0
-dernier_score_temps = 0
 mode_plein_ecran_graphe = True
 rafraichir_graphe = True
 
 def thread_entrainement_background(agent, slider_bg):
-    global scores_train, moyennes_train, en_pause, en_cours, vitesse_reelle_bg, dernier_score_temps, rafraichir_graphe
+    global scores_train, moyennes_train, en_pause, en_cours, vitesse_reelle_bg, rafraichir_graphe, timestamps_points_recents
     
     nb_env = 20
     jeux_invisibles = [SnakeGame(mode_graphique=False) for _ in range(nb_env)]
@@ -187,7 +189,11 @@ def thread_entrainement_background(agent, slider_bg):
                     liste_scores_recents.pop(0)
                 moyennes_train.append(sum(liste_scores_recents) / len(liste_scores_recents))
                 
-                dernier_score_temps = time.time()
+                # Enregistrer le timestamp de ce nouveau point
+                timestamps_points_recents.append(time.time())
+                if len(timestamps_points_recents) > 500:
+                    timestamps_points_recents.pop(0)
+                    
                 rafraichir_graphe = True
                 
                 etats[idx] = jeux_invisibles[idx].reset()
@@ -215,6 +221,7 @@ def thread_entrainement_background(agent, slider_bg):
 cache_surface_graphe = None
 
 def generer_rendu_graphe(large, haut, scores, moyennes):
+    """Génère l'image du fond du graphe avec les lignes de tendance."""
     g_surf = pygame.Surface((large, haut))
     g_surf.fill((20, 20, 20))
     pygame.draw.rect(g_surf, BLEU, (0, 0, large, haut), 3)
@@ -224,7 +231,6 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
     margin_x = 60
     margin_y = 50
     g_w = large - margin_x - 40
-    # Laisser de la place pour les sliders en haut
     g_h = haut - margin_y - 170
     
     base_y = haut - margin_y
@@ -245,7 +251,9 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
     pts_scores = []
     pts_moyennes = []
     
-    pas = max(1, nb_pts // 800)
+    # Affichage intelligent des points (max 200 points pour éviter la surpopulation visuelle)
+    limite_points = 200
+    pas = max(1, nb_pts // limite_points)
     indices = list(range(0, nb_pts, pas))
     if indices[-1] != nb_pts - 1:
         indices.append(nb_pts - 1)
@@ -259,10 +267,11 @@ def generer_rendu_graphe(large, haut, scores, moyennes):
         pts_moyennes.append((x, y_m))
         
     if len(pts_scores) > 1:
-        pygame.draw.lines(g_surf, (80, 80, 80), False, pts_scores, 1)
-        pygame.draw.lines(g_surf, VERT_CLAIR, False, pts_moyennes, 2)
+        # Lignes subtiles de tendance
+        pygame.draw.lines(g_surf, (50, 50, 50), False, pts_scores, 1)
+        pygame.draw.lines(g_surf, VERT_FONCE, False, pts_moyennes, 2)
         
-    # Stats décalées dynamiquement à droite
+    # Stats
     lbl_max = police.render(f"Meilleur score : {max_score}", True, ROUGE)
     lbl_avg = police.render(f"Moyenne (100) : {moyennes[-1]:.1f}", True, VERT_CLAIR)
     lbl_partie = police.render(f"Episodes : {len(scores)}", True, BLANC)
@@ -283,31 +292,28 @@ def dessiner_interface_graphe(surface, slider_bg, slider_vis, large, haut):
         
     surface.blit(cache_surface_graphe, (0, 0))
     
-    # 1. Dessiner le Slider Train BG
     slider_bg.draw(surface)
-    
-    # 2. Dessiner le Slider Rendu Visuel UNIQUEMENT en mode démo (non Endless)
     if not mode_plein_ecran_graphe:
         slider_vis.draw(surface)
     
-    # 3. Dessiner la checkbox Endless
+    # Checkbox Endless
     police = pygame.font.SysFont('arial', 13, bold=True)
     checkbox_rect = pygame.Rect(30, 15, 16, 16)
     pygame.draw.rect(surface, GRIS, checkbox_rect, border_radius=3)
     if mode_plein_ecran_graphe:
         pygame.draw.rect(surface, VERT_CLAIR, (34, 19, 8, 8), border_radius=1)
     pygame.draw.rect(surface, BLANC, checkbox_rect, 1, border_radius=3)
-    
     surface.blit(police.render("Endless", True, BLANC), (54, 15))
     
-    # Statut (décalé pour éviter les chevauchements de textes)
+    # Statut
     police_statut = pygame.font.SysFont('arial', 12)
     statut_txt = "STATUT : PAUSE [ESPACE]" if en_pause else f"VITESSE : {vitesse_reelle_bg} steps/s"
     couleur_statut = ROUGE if en_pause else VERT_CLAIR
     surface.blit(police_statut.render(statut_txt, True, couleur_statut), (130, 16))
 
-    # 4. Effet de flash
-    if len(scores_train) > 0:
+    # NOUVEAU : Dessin de TOUS les points de score avec illumination progressive dynamique
+    nb_pts = len(scores_train)
+    if nb_pts > 0:
         margin_x = 60
         margin_y = 50
         g_w = large - margin_x - 40
@@ -316,25 +322,49 @@ def dessiner_interface_graphe(surface, slider_bg, slider_vis, large, haut):
         
         max_score = max(max(scores_train), 1)
         
-        dernier_pt_x = margin_x + g_w
-        dernier_pt_y = base_y - int((scores_train[-1] / max_score) * g_h)
+        # Limite à 150 points récents affichés pour l'illumination collective et garder le tracé net
+        points_a_dessiner = min(150, nb_pts)
+        debut_idx = nb_pts - points_a_dessiner
         
-        t_ecoule = time.time() - dernier_score_temps
-        if t_ecoule < 0.25:
-            rayon_flash = int(14 * (1.0 - t_ecoule / 0.25))
-            surface_halo = pygame.Surface((rayon_flash*2, rayon_flash*2), pygame.SRCALPHA)
-            pygame.draw.circle(surface_halo, (0, 200, 255, 130), (rayon_flash, rayon_flash), rayon_flash)
-            surface.blit(surface_halo, (dernier_pt_x - rayon_flash, dernier_pt_y - rayon_flash))
+        maintenant = time.time()
         
-        pygame.draw.circle(surface, BLANC, (dernier_pt_x, dernier_pt_y), 5)
-        pygame.draw.circle(surface, ROUGE, (dernier_pt_x, dernier_pt_y), 3)
+        for k in range(points_a_dessiner):
+            idx_reel = debut_idx + k
+            
+            # Position relative X et Y du point
+            x = margin_x + int((idx_reel / (nb_pts - 1)) * g_w) if nb_pts > 1 else margin_x
+            y = base_y - int((scores_train[idx_reel] / max_score) * g_h)
+            
+            # Calculer l'âge du point pour l'effet d'illumination (si disponible dans nos timestamps)
+            if idx_reel < len(timestamps_points_recents):
+                age = maintenant - timestamps_points_recents[idx_reel]
+            else:
+                age = 99.0 # Ancien point
+                
+            # Effet de halo progressif si le point est récent (moins de 0.4s)
+            if age < 0.4:
+                intensite = 1.0 - (age / 0.4)
+                rayon = int(6 + 14 * intensite)
+                alpha = int(180 * intensite)
+                
+                # Dessiner le halo de lumière néon cyan
+                surface_halo = pygame.Surface((rayon*2, rayon*2), pygame.SRCALPHA)
+                pygame.draw.circle(surface_halo, (0, 191, 255, alpha), (rayon, rayon), rayon)
+                surface.blit(surface_halo, (x - rayon, y - rayon))
+                
+                # Point central ultra brillant
+                pygame.draw.circle(surface, BLANC, (x, y), 4)
+            else:
+                # Point normal statique (les plus anciens sont grisés, les récents brillent en vert/bleu)
+                color = VERT_CLAIR if k > points_a_dessiner - 20 else (120, 120, 120)
+                pygame.draw.circle(surface, color, (x, y), 2)
 
 
 def main():
     global en_pause, en_cours, mode_plein_ecran_graphe, rafraichir_graphe
     pygame.init()
     fenetre_globale = pygame.display.set_mode((LARGEUR_FENETRE, HAUTEUR_FENETRE))
-    pygame.display.set_caption("🐍 Snake IA — Interface Graphique double-buffer optimisée")
+    pygame.display.set_caption("🐍 Snake IA — Graphe Lumineux Progressif")
     horloge = pygame.time.Clock()
     
     surfaces_grille = []
@@ -346,7 +376,6 @@ def main():
     rect_plein_ecran = pygame.Rect(0, 0, LARGEUR_FENETRE, HAUTEUR_FENETRE)
     surface_plein_ecran = fenetre_globale.subsurface(rect_plein_ecran)
     
-    # Train BG débridé (MAX) par défaut
     slider_bg = Slider(30, 50, 240, 8, 10, 2000, 2000, titre="Train BG")
     slider_bg.mode_max = True
     slider_bg.valeur = slider_bg.max
@@ -371,7 +400,7 @@ def main():
     )
     thread_bg.start()
     
-    print("\nSimulation démarrée (Train BG débridé par défaut) !")
+    print("\nSimulation démarrée (Graphe progressif lumineux) !")
     
     while en_cours:
         fps_visual = int(slider_vis.valeur)
@@ -425,6 +454,7 @@ def main():
             
         pygame.display.flip()
         
+        # 30 FPS en plein écran pour la fluidité de l'animation des halos progressifs
         if mode_plein_ecran_graphe:
             horloge.tick(30)
         else:
