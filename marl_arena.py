@@ -212,7 +212,8 @@ def main():
             # Serpent 1 (Standard)
             done1 = (0 in morts)
             agents[0].memoriser(etats_courants[0], actions[0], recompenses[0], next_states_11d[0], done1)
-            agents[0].entrainer()
+            for _ in range(4):
+                agents[0].entrainer()
             if done1:
                 agents[0].fin_episode()
                 moy_std = jeu.obtenir_moyenne_10_vies(0)
@@ -221,7 +222,8 @@ def main():
             # Serpent 2 (Profond)
             done2 = (1 in morts)
             agents[1].memoriser(etats_courants[1], actions[1], recompenses[1], next_states_11d[1], done2)
-            agents[1].entrainer()
+            for _ in range(4):
+                agents[1].entrainer()
             if done2:
                 agents[1].fin_episode()
                 moy_prof = jeu.obtenir_moyenne_10_vies(1)
@@ -230,7 +232,8 @@ def main():
             # Serpent 3 (Raycast)
             done3 = (2 in morts)
             agents[2].memoriser(etats_courants[2], actions[2], recompenses[2], next_state_ray, done3)
-            agents[2].entrainer()
+            for _ in range(4):
+                agents[2].entrainer()
             if done3:
                 agents[2].fin_episode()
                 moy_ray = jeu.obtenir_moyenne_10_vies(2)
@@ -253,7 +256,8 @@ def main():
                 done_best = (meilleur_sid in morts)
                 agents[4].memoriser(etats_11d_tous[meilleur_sid], actions[meilleur_sid], recompenses[meilleur_sid], next_states_11d[meilleur_sid], done_best)
             
-            agents[4].entrainer()
+            for _ in range(4):
+                agents[4].entrainer()
             if done4:
                 agents[4].fin_episode()
                 moy_el = jeu.obtenir_moyenne_10_vies(4)
@@ -265,7 +269,8 @@ def main():
                 done_sid = (sid in morts)
                 agents[7].memoriser(etats_11d_tous[sid], actions[sid], recompenses[sid], next_states_11d[sid], done_sid)
             
-            agents[7].entrainer()
+            for _ in range(4):
+                agents[7].entrainer()
             done7 = (7 in morts)
             if done7:
                 agents[7].fin_episode()
