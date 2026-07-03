@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
- SNAKE IA — Entraînement DQN découplé (Multi-threading)
+ SNAKE IA — Entraînement DQN découplé & Batché (Haute Vitesse)
 =============================================================================
  Sépare complètement l'entraînement en arrière-plan (vitesse maximale) 
  de l'affichage visuel des 7 serpents de démo (vitesse humaine).
  
- Architecture :
- - 1 Thread d'entraînement en arrière-plan : calcule les étapes physiques à
-   vitesse maximale régulée par le Slider Background.
- - 1 Thread principal (Rendu & UI) : affiche les 7 instances de démo à la
-   vitesse dictée par le Slider Visual, et gère les interactions.
+ Optimisé avec du Batching d'Inférence pour libérer le CPU.
 =============================================================================
 """
 
@@ -43,7 +39,6 @@ HAUTEUR_FENETRE = HAUTEUR_SOUS_JEU * NB_LIGNES   # 800 px
 lock_modele = threading.Lock()
 
 class SubSnakeGame(SnakeGame):
-    """Instance de jeu dessinant sur sa propre sous-surface Pygame."""
     def __init__(self, surface):
         self.mode_graphique = True
         self.largeur = TAILLE_GRILLE
@@ -56,20 +51,17 @@ class SubSnakeGame(SnakeGame):
 
     def render(self, id_jeu=0):
         self.surface.fill(NOIR)
-        # Grille
         for x in range(0, self.largeur * TAILLE_CASE, TAILLE_CASE):
             pygame.draw.line(self.surface, GRIS, (x, 0), (x, self.hauteur * TAILLE_CASE))
         for y in range(0, self.hauteur * TAILLE_CASE, TAILLE_CASE):
             pygame.draw.line(self.surface, GRIS, (0, y), (self.largeur * TAILLE_CASE, y))
             
-        # Nourriture
         fx, fy = self.nourriture
         pygame.draw.rect(self.surface, ROUGE, (
             fx * TAILLE_CASE + 2, fy * TAILLE_CASE + 2,
             TAILLE_CASE - 4, TAILLE_CASE - 4
         ), border_radius=5)
         
-        # Serpent
         for i, (sx, sy) in enumerate(self.corps):
             couleur = VERT_CLAIR if i == 0 else VERT_FONCE
             pygame.draw.rect(self.surface, couleur, (
@@ -82,7 +74,6 @@ class SubSnakeGame(SnakeGame):
 
 
 class Slider:
-    """Un curseur graphique en Pygame."""
     def __init__(self, x, y, largeur, hauteur, val_min, val_max, val_init, titre="Vitesse"):
         self.rect = pygame.Rect(x, y, largeur, hauteur)
         self.min = val_min
@@ -102,7 +93,6 @@ class Slider:
         police = pygame.font.SysFont('arial', 13)
         pygame.draw.rect(surface, GRIS, self.rect, border_radius=3)
         
-        # Remplissage
         largeur_remplissage = self.bouton_rect.centerx - self.rect.x
         if largeur_remplissage > 0:
             remplissage_rect = pygame.Rect(self.rect.x, self.rect.y, largeur_remplissage, self.rect.height)
@@ -144,45 +134,45 @@ class Slider:
         self.update_bouton_pos()
 
 
-# Fichier global partagé pour enregistrer les scores de l'arrière-plan
+# Fichiers et variables partagés
 scores_train = []
 moyennes_train = []
 en_pause = False
 en_cours = True
+vitesse_reelle_bg = 0  # Permet d'afficher la vitesse réelle de calcul en direct
 
 def thread_entrainement_background(agent, slider_bg):
-    """
-    Thread secondaire calculant l'entraînement DQN à vitesse maximale
-    sans aucun rendu graphique.
-    """
-    global scores_train, moyennes_train, en_pause, en_cours
+    global scores_train, moyennes_train, en_pause, en_cours, vitesse_reelle_bg
     
-    # 20 instances de jeu invisibles dédiées uniquement à l'entraînement en arrière-plan
     nb_env = 20
     jeux_invisibles = [SnakeGame(mode_graphique=False) for _ in range(nb_env)]
     etats = [jeu.reset() for jeu in jeux_invisibles]
     liste_scores_recents = []
     
     step_compteur = 0
+    dernier_temps = time.time()
+    steps_mesures = 0
     
     while en_cours:
         if en_pause:
             time.sleep(0.1)
             continue
             
-        # FPS cible du background
         fps_bg = 0 if slider_bg.mode_max else int(slider_bg.valeur)
         temps_debut_step = time.time()
 
+        # OPTIMISATION MAJEURE : On récolte d'abord les états de tous les jeux
+        # et on demande les actions d'un seul coup via le batching d'inférence.
+        with lock_modele:
+            actions = agent.choisir_actions_batch(etats, entrainement=True)
+
         for idx in range(nb_env):
-            # Choisir l'action en protégeant l'accès au réseau
-            with lock_modele:
-                action = agent.choisir_action(etats[idx], entrainement=True)
-                
-            # Avancer le jeu
+            action = actions[idx]
+            
+            # Pas physique
             etat_suivant, recompense, termine, score = jeux_invisibles[idx].step(action)
             
-            # Stocker l'expérience
+            # Stocker la transition
             with lock_modele:
                 agent.memoriser(etats[idx], action, recompense, etat_suivant, termine)
                 
@@ -192,6 +182,7 @@ def thread_entrainement_background(agent, slider_bg):
                     agent.entrainer()
                     
             etats[idx] = etat_suivant
+            steps_mesures += 1
             
             if termine:
                 scores_train.append(score)
@@ -204,12 +195,18 @@ def thread_entrainement_background(agent, slider_bg):
                 with lock_modele:
                     agent.fin_episode()
                 
-                # Sauvegarde périodique
                 if len(scores_train) % 100 == 0:
                     with lock_modele:
                         agent.sauvegarder()
                         
-        # Limitation de vitesse du background
+        # Mesure des FPS réels de calcul en arrière-plan
+        temps_actuel = time.time()
+        if temps_actuel - dernier_temps >= 1.0:
+            vitesse_reelle_bg = int(steps_mesures / (temps_actuel - dernier_temps))
+            steps_mesures = 0
+            dernier_temps = temps_actuel
+
+        # Limitation de vitesse si demandée
         if fps_bg > 0:
             temps_ecoule = time.time() - temps_debut_step
             temps_attente = (1.0 / fps_bg) - temps_ecoule
@@ -221,14 +218,13 @@ def dessiner_graphe(surface, scores, moyennes, slider_bg, slider_vis):
     surface.fill((20, 20, 20))
     pygame.draw.rect(surface, BLEU, (0, 0, LARGEUR_SOUS_JEU, HAUTEUR_SOUS_JEU), 2)
     
-    # Rendu des deux curseurs
     slider_bg.draw(surface)
     slider_vis.draw(surface)
     
     police = pygame.font.SysFont('arial', 13)
     
     # Bouton de pause / statut
-    statut_txt = "STATUT : PAUSE" if en_pause else "STATUT : ENTRAINEMENT..."
+    statut_txt = "STATUT : PAUSE" if en_pause else f"STATUT : RUNNING ({vitesse_reelle_bg} steps/s)"
     couleur_statut = ROUGE if en_pause else VERT_CLAIR
     surface.blit(police.render(statut_txt, True, couleur_statut), (30, 110))
     
@@ -254,7 +250,6 @@ def dessiner_graphe(surface, scores, moyennes, slider_bg, slider_vis):
     pts_scores = []
     pts_moyennes = []
     
-    # Limiter à 500 points pour éviter les surcharges de tracés
     pas = max(1, nb_pts // 500)
     indices = list(range(0, nb_pts, pas))
     if indices[-1] != nb_pts - 1:
@@ -287,7 +282,6 @@ def main():
     pygame.display.set_caption("🐍 Snake IA — Double Contrôle de Vitesse Découplé (Entraînement / Rendu)")
     horloge = pygame.time.Clock()
     
-    # 8 sous-surfaces
     surfaces = []
     for lig in range(NB_LIGNES):
         for col in range(NB_COLONNES):
@@ -297,18 +291,14 @@ def main():
     offset_x = 3 * LARGEUR_SOUS_JEU
     offset_y = 1 * HAUTEUR_SOUS_JEU
     
-    # Slider 1 : Vitesse Entraînement Background (case 8, haut)
     slider_bg = Slider(30, 35, 240, 10, 10, 2000, 2000, titre="Train BG")
-    slider_bg.mode_max = True # Débridé par défaut
+    slider_bg.mode_max = True # Débridé
     
-    # Slider 2 : Vitesse Affichage Démonstrations (case 8, dessous)
     slider_vis = Slider(30, 80, 240, 10, 5, 120, 20, titre="Rendu Visuel")
     
-    # 7 instances de démonstration en direct (cases 1 à 7)
     jeux_demo = [SubSnakeGame(surfaces[i]) for i in range(7)]
     etats_demo = [jeu.reset() for jeu in jeux_demo]
     
-    # Agent d'apprentissage
     agent = AgentDQN()
     if os.path.exists(os.path.join("models", NOM_MODELE_DQN)):
         try:
@@ -316,7 +306,6 @@ def main():
         except Exception:
             pass
 
-    # Lancement du Thread d'entraînement d'arrière-plan
     thread_bg = threading.Thread(
         target=thread_entrainement_background, 
         args=(agent, slider_bg),
@@ -324,15 +313,11 @@ def main():
     )
     thread_bg.start()
     
-    print("\nDouble boucle démarrée !")
-    print("  - L'entraînement tourne en arrière-plan (géré par Train BG).")
-    print("  - Les 7 démonstrations tournent à l'écran (gérées par Rendu Visuel).")
+    print("\nSimulation démarrée (Inférence batchée haute vitesse) !")
     
     while en_cours:
-        # FPS cible pour l'affichage visuel
         fps_visual = int(slider_vis.valeur)
 
-        # --- Événements globaux et souris ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 en_cours = False
@@ -345,14 +330,12 @@ def main():
                     with lock_modele:
                         agent.sauvegarder()
             
-            # Envoyer les événements aux deux sliders
             slider_bg.handle_event(event, offset_x, offset_y)
             slider_vis.handle_event(event, offset_x, offset_y)
 
-        # --- Boucle de démonstration visuelle ---
+        # Rendu démo
         if not en_pause:
             for idx, jeu in enumerate(jeux_demo):
-                # Choix de l'action de démo (exploitation pure)
                 with lock_modele:
                     action = agent.choisir_action(etats_demo[idx], entrainement=False)
                     
@@ -363,22 +346,17 @@ def main():
                 if termine:
                     etats_demo[idx] = jeu.reset()
 
-        # Dessiner le graphe et les sliders
         dessiner_graphe(surfaces[7], scores_train, moyennes_train, slider_bg, slider_vis)
         
-        # Mise à jour écran
         pygame.display.flip()
-        
-        # Réguler uniquement le taux de rafraîchissement visuel à l'écran
         horloge.tick(fps_visual)
             
-    # Arrêt
     en_cours = False
     thread_bg.join(timeout=1.0)
     with lock_modele:
         agent.sauvegarder()
     pygame.quit()
-    print("Entraînement et démo terminés proprement.")
+    print("Entraînement terminé.")
 
 if __name__ == "__main__":
     main()

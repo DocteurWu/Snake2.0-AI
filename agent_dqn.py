@@ -109,26 +109,53 @@ class AgentDQN:
     
     def choisir_action(self, etat, entrainement=True):
         """
-        Choisit une action selon la politique epsilon-greedy.
-        
-        Paramètres :
-            etat (np.array)      : Vecteur d'état actuel (11 valeurs)
-            entrainement (bool)  : Si True, utilise epsilon-greedy
-        
-        Retourne :
-            int : Action choisie (0=tout_droit, 1=gauche, 2=droite)
+        Choisit une action individuelle selon la politique epsilon-greedy.
         """
-        # --- Exploration aléatoire ---
         if entrainement and random.random() < self.epsilon:
             return random.randint(0, NB_ACTIONS - 1)
         
-        # --- Exploitation (meilleure action selon le réseau) ---
         with torch.no_grad():
             etat_tensor = torch.tensor(
                 etat, dtype=torch.float32, device=DEVICE
             ).unsqueeze(0)
             q_values = self.reseau_principal(etat_tensor)
             return q_values.argmax(dim=1).item()
+
+    def choisir_actions_batch(self, etats, entrainement=True):
+        """
+        Choisit des actions pour un lot (batch) d'états d'un seul coup.
+        Optimisation critique pour maximiser la vitesse d'inférence sur CPU.
+        
+        Paramètres :
+            etats (list ou np.array) : Liste des N états de taille [N, 11]
+            entrainement (bool)      : Si True, applique epsilon-greedy individuellement
+            
+        Retourne :
+            np.array : Liste des N actions choisies de taille [N]
+        """
+        nb_etats = len(etats)
+        actions = np.zeros(nb_etats, dtype=np.int64)
+        
+        # Identifier les indices qui exploiteront vs ceux qui exploreront
+        indices_exploitation = []
+        for idx in range(nb_etats):
+            if entrainement and random.random() < self.epsilon:
+                actions[idx] = random.randint(0, NB_ACTIONS - 1)
+            else:
+                indices_exploitation.append(idx)
+                
+        # Exécuter l'inférence groupée pour toutes les exploitations
+        if len(indices_exploitation) > 0:
+            etats_a_predire = np.array([etats[i] for i in indices_exploitation], dtype=np.float32)
+            with torch.no_grad():
+                etats_tensor = torch.tensor(etats_a_predire, dtype=torch.float32, device=DEVICE)
+                q_values = self.reseau_principal(etats_tensor)
+                predictions = q_values.argmax(dim=1).cpu().numpy()
+                
+            for i, idx in enumerate(indices_exploitation):
+                actions[idx] = predictions[i]
+                
+        return actions
     
     def memoriser(self, etat, action, recompense, etat_suivant, termine):
         """Stocke une transition dans le replay buffer."""
@@ -137,44 +164,27 @@ class AgentDQN:
     def entrainer(self):
         """
         Entraîne le réseau principal sur un mini-batch du replay buffer.
-        
-        Algorithme DQN :
-            1. Échantillonner un batch de la mémoire
-            2. Calculer les Q-values actuelles : Q(s, a)
-            3. Calculer les Q-values cibles : r + gamma * max(Q_cible(s', a'))
-            4. Minimiser la perte MSE entre les deux
-        
-        Retourne :
-            float : Valeur de la perte (loss), ou None si pas assez de données
         """
-        # --- Vérifier qu'on a assez de données ---
         if len(self.memoire) < TAILLE_BATCH:
             return None
         
-        # --- Échantillonner un mini-batch ---
         etats, actions, recompenses, etats_suivants, termines = (
             self.memoire.echantillonner(TAILLE_BATCH)
         )
         
-        # --- Q-values actuelles : Q(s, a) ---
-        # On récupère la Q-value de l'action effectivement prise
         q_actuelles = self.reseau_principal(etats)
         q_actuelles = q_actuelles.gather(1, actions.unsqueeze(1)).squeeze(1)
         
-        # --- Q-values cibles : r + gamma * max Q_cible(s') ---
         with torch.no_grad():
             q_suivantes = self.reseau_cible(etats_suivants)
             q_max_suivantes = q_suivantes.max(dim=1)[0]
-            # Si l'épisode est terminé, pas de valeur future
             q_max_suivantes[termines] = 0.0
             q_cibles = recompenses + GAMMA * q_max_suivantes
         
-        # --- Calcul de la perte et rétropropagation ---
         perte = self.critere(q_actuelles, q_cibles)
         
         self.optimiseur.zero_grad()
         perte.backward()
-        # Gradient clipping pour la stabilité (important sur ARM)
         torch.nn.utils.clip_grad_norm_(
             self.reseau_principal.parameters(), max_norm=1.0
         )
