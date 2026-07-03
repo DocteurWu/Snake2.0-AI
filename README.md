@@ -93,8 +93,9 @@ python marl_arena.py
 
 ## 📊 Le Panneau Latéral (HUD)
 
-Le panneau latéral droit affiche en temps réel les indicateurs clés pour comparer l'efficacité des architectures :
-* **Classement dynamique** : Trié continuellement par la **moyenne de pommes mangées par vie** (le ratio total de pommes / nombre de morts).
-* **Nombre de Respawns** : Le total cumulé de morts et réapparitions de chaque agent.
-* **Record de longueur** : La longueur maximale absolue atteinte par chaque serpent depuis le début de la session.
-* **Taux d'exploration ($\epsilon$)** : Affiche en direct le facteur d'exploration décroissant de chaque DQN.
+Le panneau latéral droit (élargi à 400px pour une largeur de fenêtre de 1000px) affiche en temps réel les indicateurs clés pour comparer l'efficacité des architectures :
+* **Classement dynamique** : Trié continuellement par la **moyenne des 10 dernières vies** (score glissant actuel).
+* **Morts** : Le total cumulé de morts et réapparitions de chaque agent.
+* **Record** : La longueur maximale absolue atteinte par chaque serpent depuis le début.
+* **Données collectées** : Le nombre total de transitions accumulées dans le Replay Buffer pour chaque DQN.
+* **Taux d'exploration ($\epsilon$)** : Facteur d'exploration décroissant en direct pour les DQN.
