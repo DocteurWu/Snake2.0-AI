@@ -1,19 +1,23 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
- SNAKE IA — Entraînement DQN Multi-Agent Découplé (Double Curseurs Réels)
+ SNAKE IA — Entraînement DQN découplé (Multi-threading)
 =============================================================================
- Fait tourner 7 serpents en parallèle.
- Découplage temporel réel :
-   - Les calculs d'entraînement DQN tournent en continu à pleine vitesse CPU.
-   - L'affichage graphique (le rendu) est bridé selon le slider FPS sans 
-     bloquer le thread de calcul.
+ Sépare complètement l'entraînement en arrière-plan (vitesse maximale) 
+ de l'affichage visuel des 7 serpents de démo (vitesse humaine).
+ 
+ Architecture :
+ - 1 Thread d'entraînement en arrière-plan : calcule les étapes physiques à
+   vitesse maximale régulée par le Slider Background.
+ - 1 Thread principal (Rendu & UI) : affiche les 7 instances de démo à la
+   vitesse dictée par le Slider Visual, et gère les interactions.
 =============================================================================
 """
 
 import os
 import sys
 import time
+import threading
 import pygame
 import numpy as np
 
@@ -26,7 +30,7 @@ from config import (
 from game import SnakeGame
 from agent_dqn import AgentDQN
 
-# Dimensions de la fenêtre globale
+# Dimensions de la grille globale
 LARGEUR_SOUS_JEU = TAILLE_GRILLE * TAILLE_CASE # 400 px
 HAUTEUR_SOUS_JEU = TAILLE_GRILLE * TAILLE_CASE # 400 px
 NB_COLONNES = 4
@@ -35,7 +39,11 @@ NB_LIGNES = 2
 LARGEUR_FENETRE = LARGEUR_SOUS_JEU * NB_COLONNES # 1600 px
 HAUTEUR_FENETRE = HAUTEUR_SOUS_JEU * NB_LIGNES   # 800 px
 
+# Lock pour empêcher la lecture/écriture simultanée des poids du réseau de neurones
+lock_modele = threading.Lock()
+
 class SubSnakeGame(SnakeGame):
+    """Instance de jeu dessinant sur sa propre sous-surface Pygame."""
     def __init__(self, surface):
         self.mode_graphique = True
         self.largeur = TAILLE_GRILLE
@@ -74,13 +82,14 @@ class SubSnakeGame(SnakeGame):
 
 
 class Slider:
+    """Un curseur graphique en Pygame."""
     def __init__(self, x, y, largeur, hauteur, val_min, val_max, val_init, titre="Vitesse"):
         self.rect = pygame.Rect(x, y, largeur, hauteur)
         self.min = val_min
         self.max = val_max
         self.valeur = val_init
-        self.titre = titre
         self.bouton_rect = pygame.Rect(x, y - 5, 10, hauteur + 10)
+        self.titre = titre
         self.update_bouton_pos()
         self.drag = False
         self.mode_max = False
@@ -93,6 +102,7 @@ class Slider:
         police = pygame.font.SysFont('arial', 13)
         pygame.draw.rect(surface, GRIS, self.rect, border_radius=3)
         
+        # Remplissage
         largeur_remplissage = self.bouton_rect.centerx - self.rect.x
         if largeur_remplissage > 0:
             remplissage_rect = pygame.Rect(self.rect.x, self.rect.y, largeur_remplissage, self.rect.height)
@@ -101,7 +111,7 @@ class Slider:
         couleur_curseur = BLANC if not self.drag else VERT_CLAIR
         pygame.draw.rect(surface, couleur_curseur, self.bouton_rect, border_radius=2)
         
-        val_txt = "MAX (Illimite)" if self.mode_max else f"{int(self.valeur)}"
+        val_txt = "MAX (Débridé)" if self.mode_max else f"{int(self.valeur)} FPS"
         txt = police.render(f"{self.titre} : {val_txt}", True, BLANC)
         surface.blit(txt, (self.rect.x, self.rect.y - 18))
 
@@ -126,7 +136,7 @@ class Slider:
         ratio = (x_relatif - self.rect.x) / (self.rect.width - self.bouton_rect.width)
         self.valeur = self.min + ratio * (self.max - self.min)
         
-        if self.valeur >= self.max - (self.max - self.min) * 0.02:
+        if self.valeur >= self.max - 20:
             self.mode_max = True
         else:
             self.mode_max = False
@@ -134,67 +144,150 @@ class Slider:
         self.update_bouton_pos()
 
 
-def dessiner_graphe_et_sliders(surface, scores, moyennes, slider_train, slider_fps, fps_reel):
-    """Dessine le graphe d'évolution et les 2 sliders dans la case 8."""
+# Fichier global partagé pour enregistrer les scores de l'arrière-plan
+scores_train = []
+moyennes_train = []
+en_pause = False
+en_cours = True
+
+def thread_entrainement_background(agent, slider_bg):
+    """
+    Thread secondaire calculant l'entraînement DQN à vitesse maximale
+    sans aucun rendu graphique.
+    """
+    global scores_train, moyennes_train, en_pause, en_cours
+    
+    # 5 instances de jeu invisibles dédiées uniquement à l'entraînement en arrière-plan
+    nb_env = 5
+    jeux_invisibles = [SnakeGame(mode_graphique=False) for _ in range(nb_env)]
+    etats = [jeu.reset() for jeu in jeux_invisibles]
+    liste_scores_recents = []
+    
+    step_compteur = 0
+    
+    while en_cours:
+        if en_pause:
+            time.sleep(0.1)
+            continue
+            
+        # FPS cible du background
+        fps_bg = 0 if slider_bg.mode_max else int(slider_bg.valeur)
+        temps_debut_step = time.time()
+
+        for idx in range(nb_env):
+            # Choisir l'action en protégeant l'accès au réseau
+            with lock_modele:
+                action = agent.choisir_action(etats[idx], entrainement=True)
+                
+            # Avancer le jeu
+            etat_suivant, recompense, termine, score = jeux_invisibles[idx].step(action)
+            
+            # Stocker l'expérience
+            with lock_modele:
+                agent.memoriser(etats[idx], action, recompense, etat_suivant, termine)
+                
+                # Optimisation DQN
+                step_compteur += 1
+                if step_compteur % 4 == 0:
+                    agent.entrainer()
+                    
+            etats[idx] = etat_suivant
+            
+            if termine:
+                scores_train.append(score)
+                liste_scores_recents.append(score)
+                if len(liste_scores_recents) > 100:
+                    liste_scores_recents.pop(0)
+                moyennes_train.append(sum(liste_scores_recents) / len(liste_scores_recents))
+                
+                etats[idx] = jeux_invisibles[idx].reset()
+                with lock_modele:
+                    agent.fin_episode()
+                
+                # Sauvegarde périodique
+                if len(scores_train) % 100 == 0:
+                    with lock_modele:
+                        agent.sauvegarder()
+                        
+        # Limitation de vitesse du background
+        if fps_bg > 0:
+            temps_ecoule = time.time() - temps_debut_step
+            temps_attente = (1.0 / fps_bg) - temps_ecoule
+            if temps_attente > 0:
+                time.sleep(temps_attente)
+
+
+def dessiner_graphe(surface, scores, moyennes, slider_bg, slider_vis):
     surface.fill((20, 20, 20))
     pygame.draw.rect(surface, BLEU, (0, 0, LARGEUR_SOUS_JEU, HAUTEUR_SOUS_JEU), 2)
     
-    # Rendu des 2 Sliders
-    slider_train.draw(surface)
-    slider_fps.draw(surface)
+    # Rendu des deux curseurs
+    slider_bg.draw(surface)
+    slider_vis.draw(surface)
     
-    # Affichage du graphe
+    police = pygame.font.SysFont('arial', 13)
+    
+    # Bouton de pause / statut
+    statut_txt = "STATUT : PAUSE" if en_pause else "STATUT : ENTRAINEMENT..."
+    couleur_statut = ROUGE if en_pause else VERT_CLAIR
+    surface.blit(police.render(statut_txt, True, couleur_statut), (30, 110))
+    
+    # Dessin du graphe d'évolution
     margin_x, margin_y = 50, 40
     g_w = LARGEUR_SOUS_JEU - margin_x - 20
     g_h = HAUTEUR_SOUS_JEU - margin_y - 170
     
     base_y = HAUTEUR_SOUS_JEU - margin_y
-    top_y = 160
+    top_y = 150
     
-    # Axes
     pygame.draw.line(surface, BLANC, (margin_x, base_y), (LARGEUR_SOUS_JEU - 20, base_y), 1)
     pygame.draw.line(surface, BLANC, (margin_x, base_y), (margin_x, top_y), 1)
     
-    police = pygame.font.SysFont('arial', 13)
     if len(scores) < 2:
-        txt = police.render("En attente de donnees...", True, GRIS)
-        surface.blit(txt, (margin_x + 50, top_y + g_h // 2))
-    else:
-        max_score = max(max(scores), 1)
-        nb_pts = len(scores)
+        txt = police.render("En attente de donnees du background...", True, GRIS)
+        surface.blit(txt, (margin_x + 10, top_y + g_h // 2))
+        return
         
-        pts_scores = []
-        pts_moyennes = []
+    max_score = max(max(scores), 1)
+    nb_pts = len(scores)
+    
+    pts_scores = []
+    pts_moyennes = []
+    
+    # Limiter à 500 points pour éviter les surcharges de tracés
+    pas = max(1, nb_pts // 500)
+    indices = list(range(0, nb_pts, pas))
+    if indices[-1] != nb_pts - 1:
+        indices.append(nb_pts - 1)
         
-        for i in range(nb_pts):
-            x = margin_x + int((i / (nb_pts - 1)) * g_w)
-            y_s = base_y - int((scores[i] / max_score) * g_h)
-            pts_scores.append((x, y_s))
-            
-            y_m = base_y - int((moyennes[i] / max_score) * g_h)
-            pts_moyennes.append((x, y_m))
-            
-        if len(pts_scores) > 1:
-            pygame.draw.lines(surface, (100, 100, 100), False, pts_scores, 1)
-            pygame.draw.lines(surface, VERT_CLAIR, False, pts_moyennes, 2)
-            
-        lbl_max = police.render(f"Meilleur: {max_score}", True, ROUGE)
-        surface.blit(lbl_max, (300, 10))
-        lbl_avg = police.render(f"Moy(100): {moyennes[-1]:.1f}", True, VERT_CLAIR)
-        surface.blit(lbl_avg, (300, 28))
-        lbl_partie = police.render(f"Parties: {len(scores)}", True, BLANC)
-        surface.blit(lbl_partie, (300, 46))
-
-    # Afficher la vitesse de calcul réelle dans le coin en haut à gauche
-    txt_vitesse = police.render(f"Calculs réels : {fps_reel} steps/s", True, VERT_CLAIR)
-    surface.blit(txt_vitesse, (30, 138))
+    for idx, i in enumerate(indices):
+        x = margin_x + int((idx / (len(indices) - 1)) * g_w)
+        y_s = base_y - int((scores[i] / max_score) * g_h)
+        pts_scores.append((x, y_s))
+        
+        y_m = base_y - int((moyennes[i] / max_score) * g_h)
+        pts_moyennes.append((x, y_m))
+        
+    if len(pts_scores) > 1:
+        pygame.draw.lines(surface, (100, 100, 100), False, pts_scores, 1)
+        pygame.draw.lines(surface, VERT_CLAIR, False, pts_moyennes, 2)
+        
+    lbl_max = police.render(f"Meilleur: {max_score}", True, ROUGE)
+    surface.blit(lbl_max, (300, 10))
+    lbl_avg = police.render(f"Moy(100): {moyennes[-1]:.1f}", True, VERT_CLAIR)
+    surface.blit(lbl_avg, (300, 28))
+    lbl_partie = police.render(f"Parties BG: {len(scores)}", True, BLANC)
+    surface.blit(lbl_partie, (300, 46))
 
 
 def main():
+    global en_pause, en_cours
     pygame.init()
     fenetre_globale = pygame.display.set_mode((LARGEUR_FENETRE, HAUTEUR_FENETRE))
-    pygame.display.set_caption("🐍 Snake IA — Entraînement RL Double Vitesse (Calcul / Rendu Découplés)")
+    pygame.display.set_caption("🐍 Snake IA — Double Contrôle de Vitesse Découplé (Entraînement / Rendu)")
+    horloge = pygame.time.Clock()
     
+    # 8 sous-surfaces
     surfaces = []
     for lig in range(NB_LIGNES):
         for col in range(NB_COLONNES):
@@ -204,42 +297,42 @@ def main():
     offset_x = 3 * LARGEUR_SOUS_JEU
     offset_y = 1 * HAUTEUR_SOUS_JEU
     
-    # Sliders
-    # Slider 1 : Vitesse de calcul (pas par cycle). Si MAX -> calcul sans limite.
-    slider_train = Slider(30, 40, 240, 12, 1, 100, 5, titre="Calculs/Cycle")
-    # Slider 2 : FPS Affichage (frequence de rafraîchissement)
-    slider_fps = Slider(30, 105, 240, 12, 5, 120, 25, titre="FPS Rendu")
+    # Slider 1 : Vitesse Entraînement Background (case 8, haut)
+    slider_bg = Slider(30, 35, 240, 10, 10, 2000, 2000, titre="Train BG")
+    slider_bg.mode_max = True # Débridé par défaut
     
-    jeux = [SubSnakeGame(surfaces[i]) for i in range(7)]
+    # Slider 2 : Vitesse Affichage Démonstrations (case 8, dessous)
+    slider_vis = Slider(30, 80, 240, 10, 5, 120, 20, titre="Rendu Visuel")
+    
+    # 7 instances de démonstration en direct (cases 1 à 7)
+    jeux_demo = [SubSnakeGame(surfaces[i]) for i in range(7)]
+    etats_demo = [jeu.reset() for jeu in jeux_demo]
+    
+    # Agent d'apprentissage
     agent = AgentDQN()
-    
     if os.path.exists(os.path.join("models", NOM_MODELE_DQN)):
         try:
             agent.charger()
         except Exception:
             pass
 
-    scores_historique = []
-    moyennes_historique = []
-    liste_scores_recents = []
+    # Lancement du Thread d'entraînement d'arrière-plan
+    thread_bg = threading.Thread(
+        target=thread_entrainement_background, 
+        args=(agent, slider_bg),
+        daemon=True
+    )
+    thread_bg.start()
     
-    en_pause = False
-    en_cours = True
-    
-    etats = [jeu.get_state() for jeu in jeux]
-    
-    step_compteur = 0
-    dernier_temps_fps = time.time()
-    steps_depuis_dernier_temps = 0
-    fps_reel = 0
-    
-    # Gestion du temps de rendu
-    temps_dernier_rendu = time.time()
-    
-    print("\nEntraînement double vitesse 100% découplé lancé !")
+    print("\nDouble boucle démarrée !")
+    print("  - L'entraînement tourne en arrière-plan (géré par Train BG).")
+    print("  - Les 7 démonstrations tournent à l'écran (gérées par Rendu Visuel).")
     
     while en_cours:
-        # --- 1. Gestion des événements utilisateur (non bloquante) ---
+        # FPS cible pour l'affichage visuel
+        fps_visual = int(slider_vis.valeur)
+
+        # --- Événements globaux et souris ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 en_cours = False
@@ -249,86 +342,43 @@ def main():
                 elif event.key == pygame.K_SPACE:
                     en_pause = not en_pause
                 elif event.key == pygame.K_s:
-                    agent.sauvegarder()
-            
-            slider_train.handle_event(event, offset_x, offset_y)
-            slider_fps.handle_event(event, offset_x, offset_y)
-
-        if en_pause:
-            pygame.time.wait(100)
-            continue
-            
-        # --- 2. Phase de calculs physiques et DQN (Tâche de fond libre) ---
-        # On détermine combien d'itérations faire dans cette boucle de CPU.
-        # Si Calcul = MAX, on tourne non-stop jusqu'à ce que le temps requis pour l'affichage nous oblige à rendre la frame.
-        temps_max_calcul = 1.0 / int(slider_fps.valeur) # Temps max dispo avant le prochain dessin
-        debut_calcul = time.time()
-        
-        nb_iterations = 1000000 if slider_train.mode_max else int(slider_train.valeur)
-        compteur_boucle = 0
-        
-        while compteur_boucle < nb_iterations:
-            for i, jeu in enumerate(jeux):
-                action = agent.choisir_action(etats[i], entrainement=True)
-                etat_suivant, recompense, termine, score = jeu.step(action)
-                agent.memoriser(etats[i], action, recompense, etat_suivant, termine)
-                
-                step_compteur += 1
-                if step_compteur % 4 == 0:
-                    agent.entrainer()
-                    
-                etats[i] = etat_suivant
-                steps_depuis_dernier_temps += 1
-                
-                if termine:
-                    scores_historique.append(score)
-                    liste_scores_recents.append(score)
-                    if len(liste_scores_recents) > 100:
-                        liste_scores_recents.pop(0)
-                    moyennes_historique.append(sum(liste_scores_recents) / len(liste_scores_recents))
-                    
-                    etats[i] = jeu.reset()
-                    agent.fin_episode()
-                    
-                    if len(scores_historique) % 100 == 0:
+                    with lock_modele:
                         agent.sauvegarder()
             
-            compteur_boucle += 1
-            
-            # Si on a dépassé le budget de temps de la frame d'affichage, on interrompt la boucle de calcul
-            if time.time() - debut_calcul >= temps_max_calcul:
-                break
+            # Envoyer les événements aux deux sliders
+            slider_bg.handle_event(event, offset_x, offset_y)
+            slider_vis.handle_event(event, offset_x, offset_y)
+
+        # --- Boucle de démonstration visuelle ---
+        if not en_pause:
+            for idx, jeu in enumerate(jeux_demo):
+                # Choix de l'action de démo (exploitation pure)
+                with lock_modele:
+                    action = agent.choisir_action(etats_demo[idx], entrainement=False)
+                    
+                etat_suivant, _, termine, _ = jeu.step(action)
+                jeu.render(id_jeu=idx+1)
+                etats_demo[idx] = etat_suivant
                 
-        # --- 3. Phase de Rendu Graphique (Rythmée par le slider FPS) ---
-        temps_actuel = time.time()
-        intervalle_requis = 1.0 / int(slider_fps.valeur)
+                if termine:
+                    etats_demo[idx] = jeu.reset()
+
+        # Dessiner le graphe et les sliders
+        dessiner_graphe(surfaces[7], scores_train, moyennes_train, slider_bg, slider_vis)
         
-        if temps_actuel - temps_dernier_rendu >= intervalle_requis:
-            # On dessine les serpents
-            for i, jeu in enumerate(jeux):
-                jeu.render(id_jeu=i+1)
-                
-            # Calculer la vitesse réelle toutes les secondes
-            if temps_actuel - dernier_temps_fps >= 1.0:
-                fps_reel = int(steps_depuis_dernier_temps / (temps_actuel - dernier_temps_fps))
-                steps_depuis_dernier_temps = 0
-                dernier_temps_fps = temps_actuel
-                
-            # Dessiner les stats/sliders
-            dessiner_graphe_et_sliders(surfaces[7], scores_historique, moyennes_historique, slider_train, slider_fps, fps_reel)
-            
-            # Afficher à l'écran
-            pygame.display.flip()
-            temps_dernier_rendu = temps_actuel
+        # Mise à jour écran
+        pygame.display.flip()
         
-        # Pour ne pas saturer 100% d'un cœur CPU inutilement si on limite la vitesse de calcul
-        if not slider_train.mode_max:
-            # Petite pause pour laisser respirer le CPU si vitesse demandée basse
-            time.sleep(0.001)
+        # Réguler uniquement le taux de rafraîchissement visuel à l'écran
+        horloge.tick(fps_visual)
             
-    agent.sauvegarder()
+    # Arrêt
+    en_cours = False
+    thread_bg.join(timeout=1.0)
+    with lock_modele:
+        agent.sauvegarder()
     pygame.quit()
-    print("Entraînement terminé proprement.")
+    print("Entraînement et démo terminés proprement.")
 
 if __name__ == "__main__":
     main()
