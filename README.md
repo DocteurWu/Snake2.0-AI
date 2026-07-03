@@ -46,10 +46,9 @@ Chaque serpent possède sa propre couleur distinctive et une logique décisionne
    - **Mécanique** : Recherche de chemin **A* (A-Star)** pure.
    - **Comment ça marche** : À chaque tick, il calcule la distance de Manhattan par rapport à toutes les pommes actives et sélectionne la plus proche. Il génère ensuite un graphe de navigation temporaire où les cases occupées (par son corps ou les corps de tous les autres serpents) sont marquées comme obstacles. Il exécute A* pour trouver le chemin optimal de sa tête vers cette pomme.
    - **Repli (Survival Fallback)** : Si A* ne trouve aucun chemin (serpent encerclé ou bloqué), il calcule le nombre de voisins vides autour de ses 3 coups adjacents possibles et choisit la direction qui offre le plus grand espace de liberté pour retarder la collision.
-5. **Serpent 5 : Le Psychologue (Jaune)** 
-   - **Mécanique** : Algorithme **Minimax** de théorie des jeux avec élagage **Alpha-Bêta** (profondeur 3).
-   - **Comment ça marche** : Il repère le serpent adverse dont la tête est la plus proche de la sienne. Il modélise la situation comme un jeu à deux joueurs à somme nulle : lui-même (Max) cherche à maximiser son score de survie et d'accès aux pommes, et l'adversaire (Min) cherche à minimiser ce score en le bloquant. L'arbre simule l'action de Max, la réaction de Min, puis le coup suivant de Max.
-   - **Fonction d'évaluation** : Évalue chaque feuille de simulation en récompensant la survie, la proximité avec la pomme la plus proche, et en pénalisant fortement la collision. Si la tête du Psychologue arrive à 1 case de la cellule projetée devant l'adversaire (interception de trajectoire), un fort bonus de blocage lui est attribué.
+5. **Serpent 5 : L'Élite (Jaune)** 
+   - **Mécanique** : Réseau profond DQN avec apprentissage par **imitation sélective**.
+   - **Comment ça marche** : C'est un modèle PyTorch de 4 couches cachées (256/128/64/32 neurones). Il apprend à partir de deux sources de données : ses propres transitions de jeu (apprentissage par renforcement classique) ET les transitions du **meilleur serpent actuel du classement général** (imitation de l'expert). À chaque tick, si le leader du classement général est un autre serpent, ses mouvements sont injectés directement dans le replay buffer de l'Élite. Cela lui permet de cloner activement la politique du serpent le plus performant du moment tout en explorant l'arène.
 6. **Serpent 6 : L'Économiste (Orange)** 
    - **Mécanique** : Calcul tridimensionnel sur **carte d'influence (Heatmap / Champ de potentiel)**.
    - **Comment ça marche** : Sans planifier sur plusieurs coups, il applique une analyse physique de champ de forces locaux sur ses 3 mouvements possibles (devant, gauche, droite). 

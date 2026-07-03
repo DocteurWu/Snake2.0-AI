@@ -61,8 +61,8 @@ def main():
     print("Description des concurrents :")
     print("  - Mathématicien (A*) : Calcule le chemin le plus court vers la pomme la plus")
     print("                         proche en évitant les obstacles. Fallback de survie si bloqué.")
-    print("  - Psychologue (Minimax) : Simule ses actions et celles de l'ennemi le plus proche")
-    print("                            (arbre de profondeur 3, Alpha-Beta) pour bloquer sa route.")
+    print("  - Élite (DQN Sélectif) : Réseau profond apprenant en continu de ses données")
+    print("                           et des transitions du meilleur serpent actuel de la session.")
     print("  - Économiste (Influence) : Évalue le potentiel des cases adjacentes (attraction pomme +1,")
     print("                             répulsion obstacles -5 et têtes adverses -10).")
     print("  - Stratège (GameTheory) : Anticipe la trajectoire adverse sur 2 pas pour couper la route")
@@ -91,7 +91,7 @@ def main():
     jeu.ajouter_serpent(1, "Profond (DQN)", COULEURS_SERPENTS[1])
     jeu.ajouter_serpent(2, "Raycast (DQN)", COULEURS_SERPENTS[2])
     jeu.ajouter_serpent(3, "Mathématicien (A*)", COULEURS_SERPENTS[3])
-    jeu.ajouter_serpent(4, "Psychologue (Minimax)", COULEURS_SERPENTS[4])
+    jeu.ajouter_serpent(4, "Élite (DQN Sélectif)", COULEURS_SERPENTS[4])
     jeu.ajouter_serpent(5, "Économiste (Influence)", COULEURS_SERPENTS[5])
     jeu.ajouter_serpent(6, "Stratège (GameTheory)", COULEURS_SERPENTS[6])
     jeu.ajouter_serpent(7, "Collectif (DQN Partagé)", COULEURS_SERPENTS[7])
@@ -106,14 +106,14 @@ def main():
         1: DQNAgent("Profond", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
         2: DQNAgent("Raycast", taille_entree=24, couches_cachees=[256, 128]),
         3: AStarAgent(),
-        4: MinimaxAgent(profondeur=3),
+        4: DQNAgent("Elite", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
         5: EconomistAgent(),
         6: StrategistAgent(),
         7: DQNAgent("Collectif", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995)
     }
     
-    # Charger les checkpoints pour les 4 DQN
-    for sid in [0, 1, 2, 7]:
+    # Charger les checkpoints pour les 5 DQN
+    for sid in [0, 1, 2, 4, 7]:
         if agents[sid].charger_si_existe():
             # Restaurer les statistiques historiques dans l'arène
             s = jeu.snakes[sid]
@@ -173,13 +173,13 @@ def main():
                     # Raycast 24D
                     etats_courants[sid] = jeu.get_raycast_state(sid)
             
-            # Enregistrer l'état 11D avant mouvement pour tous les serpents (requis pour le buffer partagé)
+            # Enregistrer l'état 11D avant mouvement pour tous les serpents (requis pour les buffers partagés)
             etats_11d_tous = {}
             for sid in range(8):
                 etats_11d_tous[sid] = jeu.get_11d_state(sid)
                 
             for sid, s in jeu.snakes.items():
-                if sid in [0, 1, 7]:
+                if sid in [0, 1, 4, 7]:
                     # États 11D
                     etats_courants[sid] = etats_11d_tous[sid]
                 elif sid == 2:
@@ -189,7 +189,7 @@ def main():
             # --- 2. Choisir l'action pour chaque agent ---
             actions = {}
             for sid in range(8):
-                if sid in [0, 1, 7]:
+                if sid in [0, 1, 4, 7]:
                     actions[sid] = agents[sid].choisir_action(etats_courants[sid])
                 elif sid == 2:
                     actions[sid] = agents[sid].choisir_action(etats_courants[sid])
@@ -236,6 +236,32 @@ def main():
                 s_ray = jeu.snakes[2]
                 moy_ray = s_ray['total_pommes_historique'] / max(1, s_ray['nb_respawns'])
                 agents[2].sauvegarder_si_meilleur(moy_ray)
+                
+            # Trouver le meilleur serpent actuel du classement (basé sur la moyenne de pommes/vie)
+            meilleur_sid = None
+            meilleure_moy = -1.0
+            for sid, s in jeu.snakes.items():
+                morts_s = s['nb_respawns']
+                pommes_s = s['total_pommes_historique']
+                moy_s = pommes_s / max(1, morts_s)
+                if moy_s > meilleure_moy:
+                    meilleure_moy = moy_s
+                    meilleur_sid = sid
+            
+            # Serpent 5 (Élite - DQN Sélectif)
+            # Apprend de ses données ET de celles du meilleur serpent de la session
+            done4 = (4 in morts)
+            agents[4].memoriser(etats_courants[4], actions[4], recompenses[4], next_states_11d[4], done4)
+            if meilleur_sid is not None and meilleur_sid != 4:
+                done_best = (meilleur_sid in morts)
+                agents[4].memoriser(etats_11d_tous[meilleur_sid], actions[meilleur_sid], recompenses[meilleur_sid], next_states_11d[meilleur_sid], done_best)
+            
+            agents[4].entrainer()
+            if done4:
+                agents[4].fin_episode()
+                s_el = jeu.snakes[4]
+                moy_el = s_el['total_pommes_historique'] / max(1, s_el['nb_respawns'])
+                agents[4].sauvegarder_si_meilleur(moy_el)
                 
             # Serpent 8 (Collectif - DQN Partagé)
             # Apprend des transitions 11D de tous les 8 serpents de l'arène
@@ -333,20 +359,20 @@ def main():
         
         # Calculer le classement dynamique
         # Trié par : moyenne de pommes par vie desc, puis record max long desc
-        stats_serpents = []
-        for sid, s in jeu.snakes.items():
-            morts = s['nb_respawns']
-            pommes = s['total_pommes_historique']
-            moyenne = pommes / max(1, morts)
-            stats_serpents.append({
-                'id': sid,
-                'nom': s['nom'],
-                'color': s['couleur'],
-                'morts': morts,
-                'max_len': s['max_longueur'],
-                'moyenne': moyenne,
-                'eps': agents[sid].epsilon if sid in [0, 1, 2, 7] else None
-            })
+            stats_serpents = []
+            for sid, s in jeu.snakes.items():
+                morts = s['nb_respawns']
+                pommes = s['total_pommes_historique']
+                moyenne = pommes / max(1, morts)
+                stats_serpents.append({
+                    'id': sid,
+                    'nom': s['nom'],
+                    'color': s['couleur'],
+                    'morts': morts,
+                    'max_len': s['max_longueur'],
+                    'moyenne': moyenne,
+                    'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None
+                })
             
         stats_serpents.sort(key=lambda x: (x['moyenne'], x['max_len']), reverse=True)
         
