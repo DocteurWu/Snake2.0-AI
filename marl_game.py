@@ -9,6 +9,7 @@
 """
 
 import random
+from collections import deque
 import numpy as np
 
 # Constantes de directions
@@ -51,7 +52,8 @@ class MARLGame:
             'nb_respawns': 0,
             'total_pommes_historique': 0,
             'max_longueur': 3,
-            'steps_sans_manger': 0
+            'steps_sans_manger': 0,
+            'historique_scores': deque(maxlen=10)
         }
         self.respawn_serpent(snake_id)
         
@@ -414,8 +416,11 @@ class MARLGame:
                     
         # 4. Gérer les morts et les respawns
         for sid in dead_snakes:
-            self.snakes[sid]['nb_respawns'] += 1
-            self.snakes[sid]['score_courant'] = 0
+            snake = self.snakes[sid]
+            # Enregistrer le score final de cette vie dans l'historique des 10 dernières
+            snake['historique_scores'].append(snake['score_courant'])
+            snake['nb_respawns'] += 1
+            snake['score_courant'] = 0
             self.respawn_serpent(sid)
             
         # 5. Remplacer les pommes mangées
@@ -423,3 +428,11 @@ class MARLGame:
             self.placer_nouvelle_pomme()
             
         return dead_snakes, rewards
+
+    def obtenir_moyenne_10_vies(self, snake_id):
+        """Retourne la moyenne des pommes mangées lors des 10 dernières vies."""
+        snake = self.snakes[snake_id]
+        hist = snake['historique_scores']
+        if not hist:
+            return float(snake['score_courant'])
+        return sum(hist) / len(hist)

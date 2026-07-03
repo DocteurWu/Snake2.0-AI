@@ -119,6 +119,9 @@ def main():
             s = jeu.snakes[sid]
             s['nb_respawns'] = agents[sid].nb_episodes
             s['total_pommes_historique'] = int(agents[sid].meilleure_moyenne * agents[sid].nb_episodes)
+            # Reconstituer l'historique des 10 dernières vies avec la moyenne chargée
+            nb_vies_chargees = min(10, agents[sid].nb_episodes)
+            s['historique_scores'].extend([int(agents[sid].meilleure_moyenne)] * nb_vies_chargees)
 
     # Variables de contrôle de simulation
     vitesses_fps = [5, 10, 15, 25, 40, 60, 120, 250, 500, 0] # 0 = Max / Illimité
@@ -213,8 +216,7 @@ def main():
             agents[0].entrainer()
             if done1:
                 agents[0].fin_episode()
-                s_std = jeu.snakes[0]
-                moy_std = s_std['total_pommes_historique'] / max(1, s_std['nb_respawns'])
+                moy_std = jeu.obtenir_moyenne_10_vies(0)
                 agents[0].sauvegarder_si_meilleur(moy_std)
                 
             # Serpent 2 (Profond)
@@ -223,8 +225,7 @@ def main():
             agents[1].entrainer()
             if done2:
                 agents[1].fin_episode()
-                s_prof = jeu.snakes[1]
-                moy_prof = s_prof['total_pommes_historique'] / max(1, s_prof['nb_respawns'])
+                moy_prof = jeu.obtenir_moyenne_10_vies(1)
                 agents[1].sauvegarder_si_meilleur(moy_prof)
                 
             # Serpent 3 (Raycast)
@@ -233,17 +234,14 @@ def main():
             agents[2].entrainer()
             if done3:
                 agents[2].fin_episode()
-                s_ray = jeu.snakes[2]
-                moy_ray = s_ray['total_pommes_historique'] / max(1, s_ray['nb_respawns'])
+                moy_ray = jeu.obtenir_moyenne_10_vies(2)
                 agents[2].sauvegarder_si_meilleur(moy_ray)
                 
-            # Trouver le meilleur serpent actuel du classement (basé sur la moyenne de pommes/vie)
+            # Trouver le meilleur serpent actuel du classement (basé sur la moyenne des 10 dernières vies)
             meilleur_sid = None
             meilleure_moy = -1.0
             for sid, s in jeu.snakes.items():
-                morts_s = s['nb_respawns']
-                pommes_s = s['total_pommes_historique']
-                moy_s = pommes_s / max(1, morts_s)
+                moy_s = jeu.obtenir_moyenne_10_vies(sid)
                 if moy_s > meilleure_moy:
                     meilleure_moy = moy_s
                     meilleur_sid = sid
@@ -259,8 +257,7 @@ def main():
             agents[4].entrainer()
             if done4:
                 agents[4].fin_episode()
-                s_el = jeu.snakes[4]
-                moy_el = s_el['total_pommes_historique'] / max(1, s_el['nb_respawns'])
+                moy_el = jeu.obtenir_moyenne_10_vies(4)
                 agents[4].sauvegarder_si_meilleur(moy_el)
                 
             # Serpent 8 (Collectif - DQN Partagé)
@@ -273,8 +270,7 @@ def main():
             done7 = (7 in morts)
             if done7:
                 agents[7].fin_episode()
-                s_col = jeu.snakes[7]
-                moy_col = s_col['total_pommes_historique'] / max(1, s_col['nb_respawns'])
+                moy_col = jeu.obtenir_moyenne_10_vies(7)
                 agents[7].sauvegarder_si_meilleur(moy_col)
 
         # =============================================================================
@@ -354,7 +350,7 @@ def main():
         pygame.draw.line(fenetre, GRIS_BORDURE, (LARGEUR_JEU + 10, 75), (LARGEUR_FENETRE - 10, 75), 1)
         
         # En-tête classement
-        class_title = police_section.render("CLASSEMENT (Pommes / Vie)", True, BLANC)
+        class_title = police_section.render("CLASSEMENT (Moyenne 10 Vies)", True, BLANC)
         fenetre.blit(class_title, (LARGEUR_JEU + 15, 85))
         
         # Calculer le classement dynamique
@@ -362,8 +358,7 @@ def main():
             stats_serpents = []
             for sid, s in jeu.snakes.items():
                 morts = s['nb_respawns']
-                pommes = s['total_pommes_historique']
-                moyenne = pommes / max(1, morts)
+                moyenne = jeu.obtenir_moyenne_10_vies(sid)
                 stats_serpents.append({
                     'id': sid,
                     'nom': s['nom'],
