@@ -65,6 +65,10 @@ class DQNAgent:
         self.epsilon_fin = 0.05
         self.epsilon_decroissance = epsilon_decay
         
+        # Sauvegarde
+        self.chemin_sauvegarde = f"models/marl_dqn_{self.nom.lower()}.pth"
+        self.meilleure_moyenne = 0.0
+        
         # Compteurs
         self.nb_episodes = 0
         self.nb_ticks = 0
@@ -125,6 +129,56 @@ class DQNAgent:
         # Synchronisation périodique du réseau cible
         if self.nb_episodes % 10 == 0:
             self.reseau_cible.load_state_dict(self.reseau_principal.state_dict())
+
+    def charger_si_existe(self):
+        """Charge les poids s'il y a une sauvegarde, et adapte epsilon et statistiques en conséquence."""
+        charge = False
+        if os.path.exists(self.chemin_sauvegarde):
+            charge = self.reseau_principal.charger(self.chemin_sauvegarde, self.device)
+        elif self.nom == "Standard" and os.path.exists("models/dqn_snake.pth"):
+            # Fallback vers le modèle pré-entraîné solo pour le DQN standard
+            charge = self.reseau_principal.charger("models/dqn_snake.pth", self.device)
+            
+        if charge:
+            self.reseau_cible.load_state_dict(self.reseau_principal.state_dict())
+            self.epsilon = 0.25
+            
+            # Charger aussi les métadonnées pour continuer la décroissance d'epsilon et la moyenne
+            chemin_meta = self.chemin_sauvegarde.replace(".pth", "_meta.pkl")
+            if os.path.exists(chemin_meta):
+                try:
+                    with open(chemin_meta, "rb") as f:
+                        meta = pickle.load(f)
+                    self.meilleure_moyenne = meta.get('meilleure_moyenne', 0.0)
+                    self.nb_episodes = meta.get('nb_episodes', 0)
+                    self.epsilon = meta.get('epsilon', 0.25)
+                    print(f"[Arena] [{self.nom}] Métadonnées chargées : Meilleure moyenne = {self.meilleure_moyenne:.2f}, Episodes = {self.nb_episodes}, Epsilon = {self.epsilon:.3f}")
+                except Exception as e:
+                    print(f"[Arena] [{self.nom}] Erreur lecture métadonnées : {e}")
+            else:
+                print(f"[Arena] [{self.nom}] Pas de métadonnées trouvées. Utilisation d'un epsilon par défaut de 0.25.")
+            return True
+        return False
+
+    def sauvegarder_si_meilleur(self, moyenne_actuelle):
+        """Sauvegarde les poids du modèle si sa moyenne actuelle de pommes par vie bat son record."""
+        # On attend au moins 5 vies pour que la moyenne soit significative
+        if self.nb_episodes >= 5 and moyenne_actuelle > self.meilleure_moyenne:
+            self.meilleure_moyenne = moyenne_actuelle
+            try:
+                self.reseau_principal.sauvegarder(self.chemin_sauvegarde)
+                
+                # Sauvegarder les métadonnées pour la reprise
+                chemin_meta = self.chemin_sauvegarde.replace(".pth", "_meta.pkl")
+                with open(chemin_meta, "wb") as f:
+                    pickle.dump({
+                        'meilleure_moyenne': self.meilleure_moyenne,
+                        'nb_episodes': self.nb_episodes,
+                        'epsilon': self.epsilon
+                    }, f)
+                print(f"[Record] >>> Agent [{self.nom}] bat son record avec {moyenne_actuelle:.2f} pommes/vie ! Poids sauvegardés.")
+            except Exception as e:
+                print(f"[!] Erreur de sauvegarde pour [{self.nom}] : {e}")
 
 
 # =============================================================================

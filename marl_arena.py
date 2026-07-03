@@ -100,17 +100,13 @@ def main():
         7: HistorianAgent(chemin_donnees="data/parties_humaines.pkl", k=5)
     }
     
-    # Essayer de charger des poids pré-entraînés pour Serpent 1 (Standard) si présents
-    if os.path.exists("models/dqn_snake.pth"):
-        try:
-            print("[Arena] Détection d'un modèle pré-entraîné pour Serpent 1 (DQN)...")
-            agents[0].reseau_principal.charger("models/dqn_snake.pth", agents[0].device)
-            agents[0].reseau_cible.load_state_dict(agents[0].reseau_principal.state_dict())
-            # Démarrer avec un epsilon bas pour utiliser son entraînement tout en explorant un peu
-            agents[0].epsilon = 0.2
-            print("[Arena] => Chargé avec succès. Epsilon initial réduit à 0.2.")
-        except Exception as e:
-            print(f"[Arena] => Échec de chargement des poids existants (différence d'architecture probable) : {e}")
+    # Charger les checkpoints pour les 3 DQN
+    for sid in [0, 1, 2]:
+        if agents[sid].charger_si_existe():
+            # Restaurer les statistiques historiques dans l'arène
+            s = jeu.snakes[sid]
+            s['nb_respawns'] = agents[sid].nb_episodes
+            s['total_pommes_historique'] = int(agents[sid].meilleure_moyenne * agents[sid].nb_episodes)
 
     # Variables de contrôle de simulation
     vitesses_fps = [5, 10, 15, 25, 40, 60, 120, 250, 500, 0] # 0 = Max / Illimité
@@ -191,6 +187,9 @@ def main():
             agents[0].entrainer()
             if done1:
                 agents[0].fin_episode()
+                s_std = jeu.snakes[0]
+                moy_std = s_std['total_pommes_historique'] / max(1, s_std['nb_respawns'])
+                agents[0].sauvegarder_si_meilleur(moy_std)
                 
             # Serpent 2 (Profond)
             done2 = (1 in morts)
@@ -198,6 +197,9 @@ def main():
             agents[1].entrainer()
             if done2:
                 agents[1].fin_episode()
+                s_prof = jeu.snakes[1]
+                moy_prof = s_prof['total_pommes_historique'] / max(1, s_prof['nb_respawns'])
+                agents[1].sauvegarder_si_meilleur(moy_prof)
                 
             # Serpent 3 (Raycast)
             done3 = (2 in morts)
@@ -205,6 +207,9 @@ def main():
             agents[2].entrainer()
             if done3:
                 agents[2].fin_episode()
+                s_ray = jeu.snakes[2]
+                moy_ray = s_ray['total_pommes_historique'] / max(1, s_ray['nb_respawns'])
+                agents[2].sauvegarder_si_meilleur(moy_ray)
 
         # =============================================================================
         # RENDU GRAPHIQUE (Pygame)
