@@ -157,8 +157,8 @@ def thread_entrainement_background(agent, slider_bg):
     """
     global scores_train, moyennes_train, en_pause, en_cours
     
-    # 5 instances de jeu invisibles dédiées uniquement à l'entraînement en arrière-plan
-    nb_env = 5
+    # 20 instances de jeu invisibles dédiées uniquement à l'entraînement en arrière-plan
+    nb_env = 20
     jeux_invisibles = [SnakeGame(mode_graphique=False) for _ in range(nb_env)]
     etats = [jeu.reset() for jeu in jeux_invisibles]
     liste_scores_recents = []
