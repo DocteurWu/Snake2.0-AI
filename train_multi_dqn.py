@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
- SNAKE IA — Entraînement DQN découplé & Batché (Haute Vitesse)
+ SNAKE IA — Entraînement DQN découplé & Ultra-Haute Vitesse (Sans contention)
 =============================================================================
- Sépare complètement l'entraînement en arrière-plan (vitesse maximale) 
- de l'affichage visuel des 7 serpents de démo (vitesse humaine).
- 
- Optimisé avec du Batching d'Inférence pour libérer le CPU.
+ Version optimisée sans blocage de verrous (lock contention).
+ Le verrou n'est acquis que pendant l'optimisation des poids du réseau.
 =============================================================================
 """
 
@@ -26,7 +24,7 @@ from config import (
 from game import SnakeGame
 from agent_dqn import AgentDQN
 
-# Dimensions de la grille globale
+# Dimensions
 LARGEUR_SOUS_JEU = TAILLE_GRILLE * TAILLE_CASE # 400 px
 HAUTEUR_SOUS_JEU = TAILLE_GRILLE * TAILLE_CASE # 400 px
 NB_COLONNES = 4
@@ -35,7 +33,7 @@ NB_LIGNES = 2
 LARGEUR_FENETRE = LARGEUR_SOUS_JEU * NB_COLONNES # 1600 px
 HAUTEUR_FENETRE = HAUTEUR_SOUS_JEU * NB_LIGNES   # 800 px
 
-# Lock pour empêcher la lecture/écriture simultanée des poids du réseau de neurones
+# Verrou de modèle (utilisé uniquement pour protéger l'accès aux poids pendant train/inference)
 lock_modele = threading.Lock()
 
 class SubSnakeGame(SnakeGame):
@@ -139,7 +137,7 @@ scores_train = []
 moyennes_train = []
 en_pause = False
 en_cours = True
-vitesse_reelle_bg = 0  # Permet d'afficher la vitesse réelle de calcul en direct
+vitesse_reelle_bg = 0
 
 def thread_entrainement_background(agent, slider_bg):
     global scores_train, moyennes_train, en_pause, en_cours, vitesse_reelle_bg
@@ -161,28 +159,29 @@ def thread_entrainement_background(agent, slider_bg):
         fps_bg = 0 if slider_bg.mode_max else int(slider_bg.valeur)
         temps_debut_step = time.time()
 
-        # OPTIMISATION MAJEURE : On récolte d'abord les états de tous les jeux
-        # et on demande les actions d'un seul coup via le batching d'inférence.
+        # 1. Inférence Batchée (sécurisée par lock minimal)
         with lock_modele:
             actions = agent.choisir_actions_batch(etats, entrainement=True)
 
+        # 2. Simulation physique des 20 jeux (HORS DU VERROU, ultra-rapide)
         for idx in range(nb_env):
             action = actions[idx]
+            etat_actuel = etats[idx]
             
-            # Pas physique
+            # Pas de jeu logique
             etat_suivant, recompense, termine, score = jeux_invisibles[idx].step(action)
             
-            # Stocker la transition
-            with lock_modele:
-                agent.memoriser(etats[idx], action, recompense, etat_suivant, termine)
-                
-                # Optimisation DQN
-                step_compteur += 1
-                if step_compteur % 4 == 0:
-                    agent.entrainer()
-                    
+            # Stockage de la transition (HORS DU VERROU, thread-safe grâce au deque)
+            agent.memoriser(etat_actuel, action, recompense, etat_suivant, termine)
+            
             etats[idx] = etat_suivant
             steps_mesures += 1
+            
+            # 3. Entraînement DQN ponctuel (verrouillé uniquement pendant l'optimisation)
+            step_compteur += 1
+            if step_compteur % 4 == 0:
+                with lock_modele:
+                    agent.entrainer()
             
             if termine:
                 scores_train.append(score)
@@ -313,7 +312,7 @@ def main():
     )
     thread_bg.start()
     
-    print("\nSimulation démarrée (Inférence batchée haute vitesse) !")
+    print("\nSimulation démarrée (Inférence batchée ultra-haute vitesse sans verrous inutiles) !")
     
     while en_cours:
         fps_visual = int(slider_vis.valeur)
