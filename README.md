@@ -1,84 +1,90 @@
-# 🐍 Snake IA — Apprentissage par Imitation + Renforcement
+# 🐍 Snake IA 2.0 — Arène Compétitive Multi-Agent (MARL) & Algorithmique
 
-Ce projet implémente un système d'Intelligence Artificielle modulaire combinant du **Behavioral Cloning** (apprentissage supervisé à partir de vos propres parties) et du **Deep Q-Learning (DQN)** (apprentissage par renforcement autonome). Il est conçu pour être extrêmement léger et optimisé pour tourner sur le processeur CPU 4 cœurs d'un **Orange Pi 3B**.
+Bienvenue dans **Snake IA 2.0**, une arène de simulation compétitive en temps réel sous forme de **monde persistant synchrone**. Cette arène fait s'affronter **8 architectures de serpents très différentes** (3 agents de Deep Reinforcement Learning PyTorch et 5 agents algorithmiques et mathématiques classiques) dans une grille unique de **40x40** cases contenant en permanence **8 pommes**.
+
+La simulation tourne à l'infini (pas de Game Over global). Lorsqu'un serpent meurt, il subit sa pénalité de collision, son score individuel retombe à 0, et il réapparaît (respawn) instantanément dans une zone libre de l'arène avec sa taille initiale de 3 cases.
+
+---
 
 ## 📖 Documentation Scientifique
-Pour comprendre la formulation mathématique du projet (Processus de Décision Markovien, Équation de Bellman, Cross-Entropy Loss et Double Réseau DQN), consultez le document :
-👉 **[Rapport Technique de Modélisation Mathématique](Rapport_Technique.md)**
+Pour comprendre la formulation théorique des modèles de Deep Q-Learning (Bellman, target networks) et des architectures alternatives, consultez :
+👉 **[Rapport Technique de Modélisation](Rapport_Technique.md)**
 
 ---
 
 ## 🏗️ Architecture du Projet
 
+Le projet est conçu de manière modulaire et propre :
 ```
-Snake-AI/
-├── config.py              # Centralisation des constantes et hyperparamètres
-├── game.py                # Moteur physique du Snake (double mode graphique/headless)
-├── model.py               # Réseau feed-forward 11 -> 256 -> 128 -> 3 (~36k params)
-├── agent_dqn.py           # Algorithme DQN (Replay Buffer, target network)
-├── train_dqn.py           # Entraînement DQN classique en ligne de commande
-├── train_multi_dqn.py     # NOUVEAU : Entraînement de 7 agents en parallèle + Graphe interactif + Slider FPS
-├── play_and_record.py     # Enregistrement direct et automatique des parties humaines
-├── train_imitation.py     # Apprentissage par imitation (Behavioral Cloning)
-├── demo_ia.py             # Visualisation graphique du modèle entraîné
-└── Rapport_Technique.md   # Explication théorique détaillée
+Snake2.0-AI/
+├── marl_model.py          # Définition PyTorch générique du réseau dense DQN
+├── marl_agents.py         # Implémentation des 8 agents (DQN, A*, Minimax, etc.)
+├── marl_game.py           # Moteur physique multi-agent synchrone avec détection de collisions et respawn
+├── marl_arena.py          # Arène graphique Pygame & HUD du classement dynamique (point d'entrée)
+├── data/
+│   └── parties_humaines.pkl  # Dataset de parties humaines pour l'agent KNN (Historien)
+└── models/
+    └── dqn_snake.pth      # Modèle DQN pré-entraîné (optionnel pour Serpent 1)
 ```
-
-## 📝 License
-
-Ce projet est sous licence **MIT** (Open Source avec attribution requise). Voir le fichier [LICENSE](LICENSE) pour plus de détails.
 
 ---
 
-## 📊 Benchmark de Performance
+## 🐍 Les 8 Architectures d'Agents
 
-L'évolution des performances du modèle DQN est évaluée automatiquement toutes les 100 parties d'entraînement (sur 100 parties de test indépendantes en mode exploitation pure). La courbe ci-dessous est mise à jour dynamiquement au fil de l'apprentissage :
+Chaque serpent possède sa propre couleur distinctive et une logique décisionnelle propre :
 
-![Benchmark](benchmark.png)
+1. **Serpent 1 : Le Standard (Bleu clair)** 
+   - **Réseau PyTorch DQN** léger (2 couches cachées, 256 et 128 neurones). 
+   - Utilise le vecteur d'état relatif compact (11 dimensions) par rapport à la pomme la plus proche. Apprend en continu via son Replay Buffer à chaque tick.
+2. **Serpent 2 : Le Profond (Rouge vif)** 
+   - **Réseau PyTorch DQN lourd** (4 couches cachées : 256/128/64/32 neurones).
+   - Conçu pour apprendre des stratégies plus complexes avec une plus grande capacité de représentation. Apprend en continu.
+3. **Serpent 3 : Le Raycast (Magenta)** 
+   - **Réseau PyTorch DQN** avec vision par **lasers/raycast** dans 8 directions (cardinales + diagonales).
+   - Reçoit un vecteur de 24 dimensions représentant les distances inverses $1/d$ vers les murs, les pommes et le corps des autres serpents. Apprend en continu.
+4. **Serpent 4 : Le Mathématicien (Vert fluo)** 
+   - *Sans IA.* Algorithme de recherche de chemin **A* (A-Star)** pur.
+   - Calcule à chaque frame le chemin le plus court vers la pomme disponible la plus proche et le suit. Dispose d'un repli de survie si aucun chemin n'est trouvé.
+5. **Serpent 5 : Le Psychologue (Jaune)** 
+   - *Sans IA.* Algorithme **Minimax avec élagage Alpha-Bêta** (profondeur 3).
+   - Simule ses propres coups et ceux du serpent le plus proche pour anticiper ses trajectoires et tenter de bloquer l'adversaire.
+6. **Serpent 6 : L'Économiste (Orange)** 
+   - *Sans IA.* Algorithme basé sur une **carte thermique d'influence (potentiel)**.
+   - Les pommes ont un potentiel attractif (+1), tandis que les murs et tous les corps de serpents à proximité ont un potentiel répulsif (-5). Se déplace vers la case adjacente de potentiel maximal.
+7. **Serpent 7 : Le Stratège (Cyan)** 
+   - *Sans IA.* Théorie des jeux pure (Matrice de gains géométrique).
+   - Analyse la trajectoire projetée des serpents à proximité (distance $\le 4$) et cherche prioritairement à couper leur route pour provoquer des collisions frontales ou latérales ("Kills").
+8. **Serpent 8 : L'Historien (Bleu indigo)** 
+   - *Sans IA.* Algorithme des **K-Plus Proches Voisins (KNN)** avec $k=5$.
+   - Cherche dans `parties_humaines.pkl` les situations les plus similaires à ce qu'il observe et reproduit fidèlement la décision prise par l'humain à l'époque.
 
 ---
 
-## 🚀 Guide Rapide de Lancement
+## 🚀 Lancer la Simulation
 
 ### 1. Installation des dépendances
+S'assurer que PyTorch, Pygame et Numpy sont installés :
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu numpy pygame
+pip install torch numpy pygame
 ```
 
-### 2. Étape A : Apprentissage par Imitation (Behavioral Cloning)
-Pour enseigner à l'IA vos propres réflexes et lui donner une base solide :
+### 2. Exécuter l'arène graphique
 ```bash
-# Lancez le jeu et faites quelques parties (18 FPS par défaut)
-python play_and_record.py
-
-# Lancez l'entraînement supervisé (qui copie votre comportement)
-python train_imitation.py --epochs 50
+python marl_arena.py
 ```
 
-### 3. Étape B : Apprentissage par Renforcement (RL DQN)
-Pour faire progresser l'IA de manière autonome :
-```bash
-# Mode interactif multi-agents (7 IA simultanées + 1 graphe + 1 Slider de vitesse)
-python train_multi_dqn.py
-
-# Mode headless (sur Orange Pi, vitesse max débridée par défaut, ou limitée en steps/s)
-python train_dqn.py --max-steps-s 1000   # Exemple : limite à 1000 calculs par seconde
-```
-
-### 4. Étape C : Démo visuelle
-Regardez le serpent final naviguer sur la grille :
-```bash
-# Visualiser le DQN
-python demo_ia.py
-
-# Visualiser le modèle d'imitation
-python demo_ia.py --imitation
-```
+### 🎛️ Commandes interactives :
+* **[ESPACE]** : Mettre en pause ou reprendre la simulation.
+* **[TOUCHE HAUT]** : Augmenter la vitesse de calcul et d'affichage. Paliers : `5, 10, 15, 25, 40, 60, 120, 250, 500 FPS` et `Illimitée` (vitesse maximale brute).
+* **[TOUCHE BAS]** : Diminuer la vitesse de simulation.
+* **[R]** : Réinitialiser à zéro toutes les statistiques du tableau d'affichage pour relancer une compétition.
 
 ---
 
-## ⚙️ Optimisations pour Orange Pi 3B (ARM)
-*   **Limitation des Threads PyTorch** : Configuré à 4 threads dans `config.py` pour correspondre précisément aux 4 cœurs physiques du CPU ARM.
-*   **Vecteur d'état compact (11 dimensions)** : Évite de passer des images brutes (convolution), ce qui réduit la charge CPU.
-*   **Taille de réseau minimisée** : Moins de 36 000 paramètres, garantissant des inférences en moins de 1ms sur CPU ARM.
-*   **Graphiques natifs Pygame** : Aucun outil tiers lourd n'est utilisé pour tracer les graphiques d'analyse en temps réel.
+## 📊 Le Panneau Latéral (HUD)
+
+Le panneau latéral droit affiche en temps réel les indicateurs clés pour comparer l'efficacité des architectures :
+* **Classement dynamique** : Trié continuellement par la **moyenne de pommes mangées par vie** (le ratio total de pommes / nombre de morts).
+* **Nombre de Respawns** : Le total cumulé de morts et réapparitions de chaque agent.
+* **Record de longueur** : La longueur maximale absolue atteinte par chaque serpent depuis le début de la session.
+* **Taux d'exploration ($\epsilon$)** : Affiche en direct le facteur d'exploration décroissant de chaque DQN.
