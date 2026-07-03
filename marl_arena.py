@@ -58,7 +58,7 @@ def main():
     print("=" * 70)
     print("        DEMARRAGE DE L'ARENE COMPETITIVE SNAKE MARL")
     print("=" * 70)
-    print("Description des concurrents algorithmiques :")
+    print("Description des concurrents :")
     print("  - Mathématicien (A*) : Calcule le chemin le plus court vers la pomme la plus")
     print("                         proche en évitant les obstacles. Fallback de survie si bloqué.")
     print("  - Psychologue (Minimax) : Simule ses actions et celles de l'ennemi le plus proche")
@@ -67,8 +67,8 @@ def main():
     print("                             répulsion obstacles -5 et têtes adverses -10).")
     print("  - Stratège (GameTheory) : Anticipe la trajectoire adverse sur 2 pas pour couper la route")
     print("                            et provoquer un crash direct (Kill).")
-    print("  - Historien (KNN) : Compare l'état binaire à 10 000 situations réelles de parties")
-    print("                      humaines pour répliquer le coup optimal (sécurité anti-collision intégrée).")
+    print("  - Collectif (DQN Partagé) : Réseau profond apprenant en continu des trajectoires 11D")
+    print("                              de TOUS les 8 serpents de l'arène dans son Replay Buffer.")
     print("=" * 70)
     
     # 1. Initialiser Pygame
@@ -94,7 +94,7 @@ def main():
     jeu.ajouter_serpent(4, "Psychologue (Minimax)", COULEURS_SERPENTS[4])
     jeu.ajouter_serpent(5, "Économiste (Influence)", COULEURS_SERPENTS[5])
     jeu.ajouter_serpent(6, "Stratège (GameTheory)", COULEURS_SERPENTS[6])
-    jeu.ajouter_serpent(7, "Historien (KNN)", COULEURS_SERPENTS[7])
+    jeu.ajouter_serpent(7, "Collectif (DQN Partagé)", COULEURS_SERPENTS[7])
     
     # Placer les pommes
     jeu.initialiser_pommes()
@@ -109,11 +109,11 @@ def main():
         4: MinimaxAgent(profondeur=3),
         5: EconomistAgent(),
         6: StrategistAgent(),
-        7: HistorianAgent(chemin_donnees="data/parties_humaines.pkl", k=5)
+        7: DQNAgent("Collectif", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995)
     }
     
-    # Charger les checkpoints pour les 3 DQN
-    for sid in [0, 1, 2]:
+    # Charger les checkpoints pour les 4 DQN
+    for sid in [0, 1, 2, 7]:
         if agents[sid].charger_si_existe():
             # Restaurer les statistiques historiques dans l'arène
             s = jeu.snakes[sid]
@@ -173,10 +173,23 @@ def main():
                     # Raycast 24D
                     etats_courants[sid] = jeu.get_raycast_state(sid)
             
+            # Enregistrer l'état 11D avant mouvement pour tous les serpents (requis pour le buffer partagé)
+            etats_11d_tous = {}
+            for sid in range(8):
+                etats_11d_tous[sid] = jeu.get_11d_state(sid)
+                
+            for sid, s in jeu.snakes.items():
+                if sid in [0, 1, 7]:
+                    # États 11D
+                    etats_courants[sid] = etats_11d_tous[sid]
+                elif sid == 2:
+                    # Raycast 24D
+                    etats_courants[sid] = jeu.get_raycast_state(sid)
+            
             # --- 2. Choisir l'action pour chaque agent ---
             actions = {}
             for sid in range(8):
-                if sid == 0 or sid == 1:
+                if sid in [0, 1, 7]:
                     actions[sid] = agents[sid].choisir_action(etats_courants[sid])
                 elif sid == 2:
                     actions[sid] = agents[sid].choisir_action(etats_courants[sid])
@@ -187,15 +200,16 @@ def main():
             # --- 3. Avancer la simulation d'un tick synchrone ---
             morts, recompenses = jeu.step(actions)
             
-            # --- 4. Entraîner en continu les 3 DQN ---
-            # Récupérer les états suivants après mouvement
-            next_state_std = jeu.get_11d_state(0)
-            next_state_prof = jeu.get_11d_state(1)
+            # --- 4. Entraîner en continu les DQN ---
+            # Récupérer les états suivants après mouvement en 11D pour tout le monde
+            next_states_11d = {}
+            for sid in range(8):
+                next_states_11d[sid] = jeu.get_11d_state(sid)
             next_state_ray = jeu.get_raycast_state(2)
             
             # Serpent 1 (Standard)
             done1 = (0 in morts)
-            agents[0].memoriser(etats_courants[0], actions[0], recompenses[0], next_state_std, done1)
+            agents[0].memoriser(etats_courants[0], actions[0], recompenses[0], next_states_11d[0], done1)
             agents[0].entrainer()
             if done1:
                 agents[0].fin_episode()
@@ -205,7 +219,7 @@ def main():
                 
             # Serpent 2 (Profond)
             done2 = (1 in morts)
-            agents[1].memoriser(etats_courants[1], actions[1], recompenses[1], next_state_prof, done2)
+            agents[1].memoriser(etats_courants[1], actions[1], recompenses[1], next_states_11d[1], done2)
             agents[1].entrainer()
             if done2:
                 agents[1].fin_episode()
@@ -222,6 +236,20 @@ def main():
                 s_ray = jeu.snakes[2]
                 moy_ray = s_ray['total_pommes_historique'] / max(1, s_ray['nb_respawns'])
                 agents[2].sauvegarder_si_meilleur(moy_ray)
+                
+            # Serpent 8 (Collectif - DQN Partagé)
+            # Apprend des transitions 11D de tous les 8 serpents de l'arène
+            for sid in range(8):
+                done_sid = (sid in morts)
+                agents[7].memoriser(etats_11d_tous[sid], actions[sid], recompenses[sid], next_states_11d[sid], done_sid)
+            
+            agents[7].entrainer()
+            done7 = (7 in morts)
+            if done7:
+                agents[7].fin_episode()
+                s_col = jeu.snakes[7]
+                moy_col = s_col['total_pommes_historique'] / max(1, s_col['nb_respawns'])
+                agents[7].sauvegarder_si_meilleur(moy_col)
 
         # =============================================================================
         # RENDU GRAPHIQUE (Pygame)
@@ -317,7 +345,7 @@ def main():
                 'morts': morts,
                 'max_len': s['max_longueur'],
                 'moyenne': moyenne,
-                'eps': agents[sid].epsilon if sid in [0, 1, 2] else None
+                'eps': agents[sid].epsilon if sid in [0, 1, 2, 7] else None
             })
             
         stats_serpents.sort(key=lambda x: (x['moyenne'], x['max_len']), reverse=True)
