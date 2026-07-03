@@ -72,6 +72,7 @@ class DQNAgent:
         # Compteurs
         self.nb_episodes = 0
         self.nb_ticks = 0
+        self.total_transitions = 0
         
     def choisir_action(self, etat, entrainement=True):
         """Choisit une action relative (0=tout droit, 1=gauche, 2=droite) via epsilon-greedy."""
@@ -86,6 +87,7 @@ class DQNAgent:
     def memoriser(self, etat, action, recompense, etat_suivant, termine):
         """Ajoute une transition dans le replay buffer."""
         self.memoire.append((etat, action, recompense, etat_suivant, termine))
+        self.total_transitions += 1
         
     def entrainer(self):
         """Effectue une étape d'apprentissage DQN sur un batch aléatoire."""
@@ -152,7 +154,8 @@ class DQNAgent:
                     self.meilleure_moyenne = meta.get('meilleure_moyenne', 0.0)
                     self.nb_episodes = meta.get('nb_episodes', 0)
                     self.epsilon = meta.get('epsilon', 0.25)
-                    print(f"[Arena] [{self.nom}] Métadonnées chargées : Meilleure moyenne = {self.meilleure_moyenne:.2f}, Episodes = {self.nb_episodes}, Epsilon = {self.epsilon:.3f}")
+                    self.total_transitions = meta.get('total_transitions', 0)
+                    print(f"[Arena] [{self.nom}] Métadonnées chargées : Meilleure moyenne = {self.meilleure_moyenne:.2f}, Episodes = {self.nb_episodes}, Epsilon = {self.epsilon:.3f}, Données collectées = {self.total_transitions}")
                 except Exception as e:
                     print(f"[Arena] [{self.nom}] Erreur lecture métadonnées : {e}")
             else:
@@ -174,7 +177,8 @@ class DQNAgent:
                     pickle.dump({
                         'meilleure_moyenne': self.meilleure_moyenne,
                         'nb_episodes': self.nb_episodes,
-                        'epsilon': self.epsilon
+                        'epsilon': self.epsilon,
+                        'total_transitions': self.total_transitions
                     }, f)
                 print(f"[Record] >>> Agent [{self.nom}] bat son record avec {moyenne_actuelle:.2f} pommes/vie ! Poids sauvegardés.")
             except Exception as e:

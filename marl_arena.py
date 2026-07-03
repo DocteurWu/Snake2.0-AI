@@ -363,7 +363,8 @@ def main():
                 'morts': morts,
                 'max_len': s['max_longueur'],
                 'moyenne': moyenne,
-                'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None
+                'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None,
+                'nb_donnees': agents[sid].total_transitions if sid in [0, 1, 2, 4, 7] else None
             })
             
         stats_serpents.sort(key=lambda x: (x['moyenne'], x['max_len']), reverse=True)
@@ -391,6 +392,8 @@ def main():
             
             # 3. Statistiques de performance
             stats_str = f"Moyenne: {stat['moyenne']:.2f}  |  Morts: {stat['morts']}  |  Record: {stat['max_len']}"
+            if stat['nb_donnees'] is not None:
+                stats_str += f"  |  Données: {stat['nb_donnees']}"
             stats_surf = police_normal.render(stats_str, True, GRIS_TEXTE)
             fenetre.blit(stats_surf, (LARGEUR_JEU + 35, y_offset + 16))
             
