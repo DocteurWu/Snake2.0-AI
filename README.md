@@ -18,13 +18,11 @@ Le projet est conçu de manière modulaire et propre :
 ```
 Snake2.0-AI/
 ├── marl_model.py          # Définition PyTorch générique du réseau dense DQN
-├── marl_agents.py         # Implémentation des 8 agents (DQN, A*, Minimax, etc.)
+├── marl_agents.py         # Implémentation des agents (DQN, A*, carte d'influence, etc.)
 ├── marl_game.py           # Moteur physique multi-agent synchrone avec détection de collisions et respawn
 ├── marl_arena.py          # Arène graphique Pygame & HUD du classement dynamique (point d'entrée)
-├── data/
-│   └── parties_humaines.pkl  # Dataset de parties humaines pour l'agent KNN (Historien)
 └── models/
-    └── dqn_snake.pth      # Modèle DQN pré-entraîné (optionnel pour Serpent 1)
+    └── marl_dqn_*.pth     # Poids sauvegardés des modèles DQN (Standard, Profond, Raycast, Élite, Collectif)
 ```
 
 ---
@@ -62,11 +60,9 @@ Chaque serpent possède sa propre couleur distinctive et une logique décisionne
    - **Mécanique** : Matrice géométrique d'interception et de blocage tactique (Theory of Games).
    - **Comment ça marche** : Son but est de provoquer la mort des concurrents directs pour éliminer la concurrence. Il scanne l'arène à la recherche d'adversaires dont la tête est à une distance $\le 4$ cases. 
    - **Interception de trajectoire** : Pour chaque cible proche, il identifie les deux prochaines positions probables de sa tête en prolongeant son vecteur de déplacement actuel ($\text{Tête} + 1 \times \text{Direction}$ et $\text{Tête} + 2 \times \text{Direction}$). Il oriente prioritairement son mouvement pour aller occuper ces cases cibles. S'il réussit, l'adversaire s'écrase sur son corps à la frame suivante, provoquant un "Kill". S'il n'y a aucun serpent à proximité, il se rabat sur une recherche de nourriture classique.
-8. **Serpent 8 : L'Historien (Bleu indigo)** 
-   - **Mécanique** : Apprentissage par instance via **K-Plus Proches Voisins (KNN)** avec vote majoritaire ($k=5$).
-   - **Comment ça marche** : Il dispose d'une base de données de 10 000 états de jeu joués et enregistrés par un humain (`data/parties_humaines.pkl`). À chaque tick, il convertit sa situation actuelle en un vecteur binaire 11D (dangers relatifs, direction absolue, nourriture relative).
-   - **Recherche par similarité** : Il effectue une distance euclidienne (équivalente à une distance de Hamming sur ce vecteur binaire) par rapport aux 10 000 exemples. Il extrait les 5 situations les plus proches, regarde quelles actions (tout droit, gauche, droite) l'humain avait prises, et prend la décision majoritaire.
-   - **Filtre de sécurité** : Les données humaines ayant été enregistrées en mode solo sans collision possible avec d'autres serpents, si l'action votée par le KNN mène à une collision immédiate avec un adversaire dans l'arène MARL, l'agent outrepasse la décision humaine et applique une action de secours non-suicidaire.
+8. **Serpent 8 : Le Collectif (Bleu indigo)** 
+   - **Mécanique** : Réseau profond DQN avec apprentissage par **partage centralisé d'expérience**.
+   - **Comment ça marche** : C'est un modèle PyTorch de 4 couches cachées (256/128/64/32 neurones). Contrairement aux autres réseaux DQN qui n'apprennent qu'à partir de leurs propres actions, le Collectif capture et pousse dans son replay buffer les transitions 11D de **TOUS les 8 serpents** (algorithmes et IA) présents dans l'arène à chaque frame. Il s'entraîne donc sur un jeu de données extrêmement riche, combinant les trajectoires parfaites de l'A* et de la carte d'influence avec les phases d'exploration et les erreurs de l'ensemble des agents.
 
 ---
 
