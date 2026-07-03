@@ -27,33 +27,6 @@ from agent_dqn import AgentDQN
 # Variables globales pour la gestion propre de l'arrêt
 interrompu = False
 agent = None
-FICHIER_HISTORIQUE = os.path.join(CHEMIN_MODELE, "training_history.json")
-
-def charger_historique():
-    import json
-    if os.path.exists(FICHIER_HISTORIQUE):
-        try:
-            with open(FICHIER_HISTORIQUE, "r") as f:
-                data = json.load(f)
-                return data.get("episodes", []), data.get("scores_moyens", [])
-        except Exception:
-            pass
-    return [], []
-
-def sauvegarder_historique(episodes_cumules, score_moyen):
-    import json
-    episodes, scores_moyens = charger_historique()
-    # Éviter les doublons pour le même épisode
-    if episodes_cumules in episodes:
-        idx = episodes.index(episodes_cumules)
-        scores_moyens[idx] = score_moyen
-    else:
-        episodes.append(episodes_cumules)
-        scores_moyens.append(score_moyen)
-    
-    os.makedirs(CHEMIN_MODELE, exist_ok=True)
-    with open(FICHIER_HISTORIQUE, "w") as f:
-        json.dump({"episodes": episodes, "scores_moyens": scores_moyens}, f)
 
 def signal_handler(sig, frame):
     global interrompu
@@ -94,11 +67,6 @@ def main():
     else:
         print("[*] Aucun modèle existant trouvé. Démarrage de zéro.")
         
-    # Charger le nombre d'épisodes déjà effectués depuis l'historique
-    episodes_hist, _ = charger_historique()
-    total_episodes = episodes_hist[-1] if episodes_hist else 0
-    print(f"[*] Reprise de l'historique : {total_episodes} épisodes déjà effectués.")
-        
     # Hyper-optimisation ARM : Nombre d'environnements parallèles en arrière-plan
     NB_ENVS = 32
     print(f"[*] Initialisation de {NB_ENVS} environnements de simulation...")
@@ -107,6 +75,7 @@ def main():
     
     scores_recents = []
     meilleur_score_moyen = 0.0
+    total_episodes = 0
     total_steps = 0
     
     dernier_log_temps = time.time()
@@ -148,10 +117,11 @@ def main():
                     agent.fin_episode()
                     etats[idx] = jeux[idx].reset()
                     
-                    # Sauvegarde périodique
+                    # Sauvegarde périodique et benchmark
                     if total_episodes % 100 == 0:
                         agent.sauvegarder()
-                        sauvegarder_historique(total_episodes, sum(scores_recents) / len(scores_recents))
+                        from benchmark import enregistrer_et_generer_benchmark
+                        enregistrer_et_generer_benchmark(total_episodes, agent)
             
             # Limiter la vitesse si demandé
             if args.max_steps_s > 0:
@@ -182,8 +152,6 @@ def main():
         # Assurer la sauvegarde finale
         if agent is not None:
             agent.sauvegarder()
-            if len(scores_recents) > 0:
-                sauvegarder_historique(total_episodes, sum(scores_recents) / len(scores_recents))
         print("\n[OK] Modèle sauvegardé avec succès. Entraînement terminé.")
 
 if __name__ == "__main__":
