@@ -18,8 +18,7 @@ import pygame
 
 from marl_game import MARLGame, DROITE, BAS, GAUCHE, HAUT
 from marl_agents import (
-    DQNAgent, AStarAgent, MinimaxAgent, EconomistAgent, 
-    StrategistAgent, HistorianAgent
+    DQNAgent, AStarAgent, EconomistAgent, StrategistAgent
 )
 
 # Dimensions
@@ -353,21 +352,19 @@ def main():
         class_title = police_section.render("CLASSEMENT (Moyenne 10 Vies)", True, BLANC)
         fenetre.blit(class_title, (LARGEUR_JEU + 15, 85))
         
-        # Calculer le classement dynamique
-        # Trié par : moyenne de pommes par vie desc, puis record max long desc
-            stats_serpents = []
-            for sid, s in jeu.snakes.items():
-                morts = s['nb_respawns']
-                moyenne = jeu.obtenir_moyenne_10_vies(sid)
-                stats_serpents.append({
-                    'id': sid,
-                    'nom': s['nom'],
-                    'color': s['couleur'],
-                    'morts': morts,
-                    'max_len': s['max_longueur'],
-                    'moyenne': moyenne,
-                    'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None
-                })
+        stats_serpents = []
+        for sid, s in jeu.snakes.items():
+            morts = s['nb_respawns']
+            moyenne = jeu.obtenir_moyenne_10_vies(sid)
+            stats_serpents.append({
+                'id': sid,
+                'nom': s['nom'],
+                'color': s['couleur'],
+                'morts': morts,
+                'max_len': s['max_longueur'],
+                'moyenne': moyenne,
+                'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None
+            })
             
         stats_serpents.sort(key=lambda x: (x['moyenne'], x['max_len']), reverse=True)
         
