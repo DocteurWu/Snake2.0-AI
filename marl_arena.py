@@ -55,9 +55,21 @@ COULEURS_SERPENTS = [
 ]
 
 def main():
-    print("=" * 60)
-    print("DEMARRAGE DE L'ARENE COMPETITIVE SNAKE MARL")
-    print("=" * 60)
+    print("=" * 70)
+    print("        DEMARRAGE DE L'ARENE COMPETITIVE SNAKE MARL")
+    print("=" * 70)
+    print("Description des concurrents algorithmiques :")
+    print("  - Mathématicien (A*) : Calcule le chemin le plus court vers la pomme la plus")
+    print("                         proche en évitant les obstacles. Fallback de survie si bloqué.")
+    print("  - Psychologue (Minimax) : Simule ses actions et celles de l'ennemi le plus proche")
+    print("                            (arbre de profondeur 3, Alpha-Beta) pour bloquer sa route.")
+    print("  - Économiste (Influence) : Évalue le potentiel des cases adjacentes (attraction pomme +1,")
+    print("                             répulsion obstacles -5 et têtes adverses -10).")
+    print("  - Stratège (GameTheory) : Anticipe la trajectoire adverse sur 2 pas pour couper la route")
+    print("                            et provoquer un crash direct (Kill).")
+    print("  - Historien (KNN) : Compare l'état binaire à 10 000 situations réelles de parties")
+    print("                      humaines pour répliquer le coup optimal (sécurité anti-collision intégrée).")
+    print("=" * 70)
     
     # 1. Initialiser Pygame
     pygame.init()

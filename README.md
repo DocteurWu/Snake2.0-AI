@@ -43,20 +43,31 @@ Chaque serpent possède sa propre couleur distinctive et une logique décisionne
    - **Réseau PyTorch DQN** avec vision par **lasers/raycast** dans 8 directions (cardinales + diagonales).
    - Reçoit un vecteur de 24 dimensions représentant les distances inverses $1/d$ vers les murs, les pommes et le corps des autres serpents. Apprend en continu.
 4. **Serpent 4 : Le Mathématicien (Vert fluo)** 
-   - *Sans IA.* Algorithme de recherche de chemin **A* (A-Star)** pur.
-   - Calcule à chaque frame le chemin le plus court vers la pomme disponible la plus proche et le suit. Dispose d'un repli de survie si aucun chemin n'est trouvé.
+   - **Mécanique** : Recherche de chemin **A* (A-Star)** pure.
+   - **Comment ça marche** : À chaque tick, il calcule la distance de Manhattan par rapport à toutes les pommes actives et sélectionne la plus proche. Il génère ensuite un graphe de navigation temporaire où les cases occupées (par son corps ou les corps de tous les autres serpents) sont marquées comme obstacles. Il exécute A* pour trouver le chemin optimal de sa tête vers cette pomme.
+   - **Repli (Survival Fallback)** : Si A* ne trouve aucun chemin (serpent encerclé ou bloqué), il calcule le nombre de voisins vides autour de ses 3 coups adjacents possibles et choisit la direction qui offre le plus grand espace de liberté pour retarder la collision.
 5. **Serpent 5 : Le Psychologue (Jaune)** 
-   - *Sans IA.* Algorithme **Minimax avec élagage Alpha-Bêta** (profondeur 3).
-   - Simule ses propres coups et ceux du serpent le plus proche pour anticiper ses trajectoires et tenter de bloquer l'adversaire.
+   - **Mécanique** : Algorithme **Minimax** de théorie des jeux avec élagage **Alpha-Bêta** (profondeur 3).
+   - **Comment ça marche** : Il repère le serpent adverse dont la tête est la plus proche de la sienne. Il modélise la situation comme un jeu à deux joueurs à somme nulle : lui-même (Max) cherche à maximiser son score de survie et d'accès aux pommes, et l'adversaire (Min) cherche à minimiser ce score en le bloquant. L'arbre simule l'action de Max, la réaction de Min, puis le coup suivant de Max.
+   - **Fonction d'évaluation** : Évalue chaque feuille de simulation en récompensant la survie, la proximité avec la pomme la plus proche, et en pénalisant fortement la collision. Si la tête du Psychologue arrive à 1 case de la cellule projetée devant l'adversaire (interception de trajectoire), un fort bonus de blocage lui est attribué.
 6. **Serpent 6 : L'Économiste (Orange)** 
-   - *Sans IA.* Algorithme basé sur une **carte thermique d'influence (potentiel)**.
-   - Les pommes ont un potentiel attractif (+1), tandis que les murs et tous les corps de serpents à proximité ont un potentiel répulsif (-5). Se déplace vers la case adjacente de potentiel maximal.
+   - **Mécanique** : Calcul tridimensionnel sur **carte d'influence (Heatmap / Champ de potentiel)**.
+   - **Comment ça marche** : Sans planifier sur plusieurs coups, il applique une analyse physique de champ de forces locaux sur ses 3 mouvements possibles (devant, gauche, droite). 
+   - **Calcul du potentiel** : Pour chaque case cible candidate :
+     - Les pommes agissent comme des charges positives attirant le serpent : $+1.0 / (\text{distance} + 0.5)$.
+     - Les segments de corps (soi et adversaires) agissent comme des charges négatives répulsives : $-5.0 / (\text{distance} + 0.5)$.
+     - Les têtes adverses à proximité immédiate doublent cette répulsion ($-10.0$) pour éviter les collisions frontales.
+     - Les murs de la grille exercent également une force de répulsion pour éviter que le serpent ne se coince contre les bords.
+     - L'agent choisit simplement le mouvement qui mène à la cellule ayant le potentiel total le plus élevé.
 7. **Serpent 7 : Le Stratège (Cyan)** 
-   - *Sans IA.* Théorie des jeux pure (Matrice de gains géométrique).
-   - Analyse la trajectoire projetée des serpents à proximité (distance $\le 4$) et cherche prioritairement à couper leur route pour provoquer des collisions frontales ou latérales ("Kills").
+   - **Mécanique** : Matrice géométrique d'interception et de blocage tactique (Theory of Games).
+   - **Comment ça marche** : Son but est de provoquer la mort des concurrents directs pour éliminer la concurrence. Il scanne l'arène à la recherche d'adversaires dont la tête est à une distance $\le 4$ cases. 
+   - **Interception de trajectoire** : Pour chaque cible proche, il identifie les deux prochaines positions probables de sa tête en prolongeant son vecteur de déplacement actuel ($\text{Tête} + 1 \times \text{Direction}$ et $\text{Tête} + 2 \times \text{Direction}$). Il oriente prioritairement son mouvement pour aller occuper ces cases cibles. S'il réussit, l'adversaire s'écrase sur son corps à la frame suivante, provoquant un "Kill". S'il n'y a aucun serpent à proximité, il se rabat sur une recherche de nourriture classique.
 8. **Serpent 8 : L'Historien (Bleu indigo)** 
-   - *Sans IA.* Algorithme des **K-Plus Proches Voisins (KNN)** avec $k=5$.
-   - Cherche dans `parties_humaines.pkl` les situations les plus similaires à ce qu'il observe et reproduit fidèlement la décision prise par l'humain à l'époque.
+   - **Mécanique** : Apprentissage par instance via **K-Plus Proches Voisins (KNN)** avec vote majoritaire ($k=5$).
+   - **Comment ça marche** : Il dispose d'une base de données de 10 000 états de jeu joués et enregistrés par un humain (`data/parties_humaines.pkl`). À chaque tick, il convertit sa situation actuelle en un vecteur binaire 11D (dangers relatifs, direction absolue, nourriture relative).
+   - **Recherche par similarité** : Il effectue une distance euclidienne (équivalente à une distance de Hamming sur ce vecteur binaire) par rapport aux 10 000 exemples. Il extrait les 5 situations les plus proches, regarde quelles actions (tout droit, gauche, droite) l'humain avait prises, et prend la décision majoritaire.
+   - **Filtre de sécurité** : Les données humaines ayant été enregistrées en mode solo sans collision possible avec d'autres serpents, si l'action votée par le KNN mène à une collision immédiate avec un adversaire dans l'arène MARL, l'agent outrepasse la décision humaine et applique une action de secours non-suicidaire.
 
 ---
 
