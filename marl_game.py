@@ -53,7 +53,8 @@ class MARLGame:
             'total_pommes_historique': 0,
             'max_longueur': 3,
             'steps_sans_manger': 0,
-            'historique_scores': deque(maxlen=10)
+            'historique_scores': deque(maxlen=10),
+            'actif': True
         }
         self.respawn_serpent(snake_id)
         
@@ -73,7 +74,8 @@ class MARLGame:
         """Retourne la liste des cellules (x, y) libres (sans corps ni pomme)."""
         cases_occupees = set(self.apples)
         for s in self.snakes.values():
-            cases_occupees.update(s['corps'])
+            if s.get('actif', True):
+                cases_occupees.update(s['corps'])
             
         cases_vides = []
         for x in range(self.largeur):
@@ -149,8 +151,8 @@ class MARLGame:
             return True
             
         for sid, s in self.snakes.items():
-            # Collision avec le corps actuel
-            if cell in s['corps']:
+            # Collision uniquement si le serpent est actif
+            if s.get('actif', True) and cell in s['corps']:
                 return True
         return False
         
@@ -233,12 +235,60 @@ class MARLGame:
             food_devant, food_derriere, food_gauche, food_droite
         ], dtype=np.float32)
 
+    def get_vision_grid_state(self, snake_id):
+        """
+        Calcule une Grille de Vision Locale de 5x5 cases située juste devant la tête,
+        alignée avec la direction actuelle du serpent.
+        Chaque case prend une valeur :
+         0: vide
+         1: pomme
+        -1: mur ou corps de serpent
+        """
+        snake = self.snakes[snake_id]
+        head = snake['corps'][0]
+        direction = snake['direction']
+        
+        # Vecteur avant (forward) et droit (right)
+        fx, fy = direction
+        rx, ry = -fy, fx
+        
+        state = []
+        for u in range(1, 6): # devant (1 à 5 cases)
+            for v in range(-2, 3): # latéral (-2 à 2 cases, de gauche à droite)
+                wx = head[0] + u * fx + v * rx
+                wy = head[1] + u * fy + v * ry
+                
+                # Hors limite (mur) -> -1
+                if not (0 <= wx < self.largeur and 0 <= wy < self.hauteur):
+                    state.append(-1.0)
+                else:
+                    # Corps de serpent -> -1
+                    is_body = False
+                    for s in self.snakes.values():
+                        if (wx, wy) in s['corps']:
+                            is_body = True
+                            break
+                    if is_body:
+                        state.append(-1.0)
+                    # Pomme -> 1
+                    elif (wx, wy) in self.apples:
+                        state.append(1.0)
+                    # Vide -> 0
+                    else:
+                        state.append(0.0)
+                        
+        return np.array(state, dtype=np.float32)
+
     def get_raycast_state(self, snake_id):
         """
-        Vecteur d'état 24D basé sur la vision "lasers" (8 directions).
+        Vecteur d'état 16D basé sur la vision "lasers" (8 directions).
         Pour chaque direction (relative horaire par rapport à la tête) :
-        [distance_mur, distance_pomme, distance_corps].
-        Valeurs normalisées en 1 / distance (0 si introuvable).
+        [distance_normalisee, id_objet]
+        
+        Identifiants d'objets :
+          1.0 : Pomme (si détectée sur le chemin avant l'obstacle)
+         -1.0 : Corps de serpent (obstacle)
+         -2.0 : Mur ou bord de la map (obstacle)
         """
         snake = self.snakes[snake_id]
         head = snake['corps'][0]
@@ -247,7 +297,6 @@ class MARLGame:
         # 8 directions absolues dans l'ordre horaire à partir de DROITE
         DIR_8 = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
         
-        # Trouver l'indice de départ dans DIR_8 correspondant à la direction du serpent
         # Les directions cardinales sont aux indices 0, 2, 4, 6 de DIR_8
         start_idx = idx_dir * 2
         
@@ -256,37 +305,44 @@ class MARLGame:
         for i in range(8):
             dx, dy = DIR_8[(start_idx + i) % 8]
             
-            dist_wall = 0.0
-            dist_food = 0.0
-            dist_body = 0.0
-            
-            found_food = False
-            found_body = False
+            dist = 0.0
+            obj_id = 0.0
+            found_apple = False
+            apple_k = None
             
             k = 1
             while True:
                 nx, ny = head[0] + k * dx, head[1] + k * dy
                 
                 # Détection mur (sortie de grille)
-                if not (0 <= nx < self.largeur and 0 <= ny < self.hauteur):
-                    dist_wall = 1.0 / k
-                    break
-                    
-                # Détection pomme
-                if not found_food and (nx, ny) in self.apples:
-                    dist_food = 1.0 / k
-                    found_food = True
-                    
-                # Détection corps d'un serpent quelconque
-                if not found_body:
+                is_wall = not (0 <= nx < self.largeur and 0 <= ny < self.hauteur)
+                
+                # Détection corps d'un serpent
+                is_body = False
+                if not is_wall:
                     for sid, s in self.snakes.items():
                         if (nx, ny) in s['corps']:
-                            dist_body = 1.0 / k
-                            found_body = True
+                            is_body = True
                             break
+                            
+                # Détection pomme
+                if not is_wall and not is_body and (nx, ny) in self.apples:
+                    if not found_apple:
+                        found_apple = True
+                        apple_k = k
+                        
+                if is_wall or is_body:
+                    # L'obstacle arrête le scan laser
+                    if found_apple:
+                        dist = 1.0 / apple_k
+                        obj_id = 1.0  # Pomme
+                    else:
+                        dist = 1.0 / k
+                        obj_id = -1.0 if is_body else -2.0  # Corps = -1.0, Mur = -2.0
+                    break
                 k += 1
                 
-            state.extend([dist_wall, dist_food, dist_body])
+            state.extend([dist, obj_id])
             
         return np.array(state, dtype=np.float32)
 
@@ -311,6 +367,8 @@ class MARLGame:
         nouvelles_tetes = {}
         for sid, action in actions.items():
             snake = self.snakes[sid]
+            if not snake.get('actif', True):
+                continue
             idx_dir = snake['index_direction']
             
             if action == 1:    # Gauche
@@ -347,8 +405,10 @@ class MARLGame:
             # Règle physique : la queue s'en va au même moment si le serpent ne mange pas.
             collision_corps = False
             for other_id, other_s in self.snakes.items():
+                if not other_s.get('actif', True):
+                    continue
                 # Déterminer si l'autre serpent va manger (pour savoir si sa queue libère la case)
-                autre_va_manger = (nouvelles_tetes[other_id] in self.apples)
+                autre_va_manger = (nouvelles_tetes.get(other_id) in self.apples)
                 corps_a_verifier = other_s['corps'] if autre_va_manger else other_s['corps'][:-1]
                 
                 if new_head in corps_a_verifier:
@@ -361,6 +421,8 @@ class MARLGame:
         pommes_mangees = []
         
         for sid, snake in self.snakes.items():
+            if not snake.get('actif', True):
+                continue
             if sid in dead_snakes:
                 rewards[sid] = -10.0
                 continue

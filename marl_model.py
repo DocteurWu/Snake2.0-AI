@@ -47,14 +47,14 @@ class ReseauDQN(nn.Module):
         if repertoire:
             os.makedirs(repertoire, exist_ok=True)
         torch.save(self.state_dict(), chemin_complet)
-        print(f"[✓] Modèle sauvegardé dans : {chemin_complet}")
+        print(f"[OK] Modèle sauvegardé dans : {chemin_complet}")
         
     def charger(self, chemin_complet, device):
         """Charge les poids du modèle."""
         if os.path.exists(chemin_complet):
             self.load_state_dict(torch.load(chemin_complet, map_location=device))
             self.eval()
-            print(f"[✓] Modèle chargé depuis : {chemin_complet}")
+            print(f"[OK] Modèle chargé depuis : {chemin_complet}")
             return True
         else:
             print(f"[!] Fichier de modèle introuvable : {chemin_complet}")

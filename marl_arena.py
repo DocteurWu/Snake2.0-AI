@@ -101,14 +101,14 @@ def main():
     # 3. Initialiser les 8 Agents
     print("\n[Initialisation des Agents...]")
     agents = {
-        0: DQNAgent("Standard", taille_entree=11, couches_cachees=[256, 128]),
-        1: DQNAgent("Profond", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
-        2: DQNAgent("Raycast", taille_entree=24, couches_cachees=[256, 128]),
+        0: DQNAgent("Standard", taille_entree=25, couches_cachees=[256, 128]),
+        1: DQNAgent("Profond", taille_entree=25, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
+        2: DQNAgent("Raycast", taille_entree=16, couches_cachees=[256, 128]),
         3: AStarAgent(),
-        4: DQNAgent("Elite", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
+        4: DQNAgent("Elite", taille_entree=25, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995),
         5: EconomistAgent(),
         6: StrategistAgent(),
-        7: DQNAgent("Collectif", taille_entree=11, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995)
+        7: DQNAgent("Collectif", taille_entree=25, couches_cachees=[256, 128, 64, 32], epsilon_decay=0.9995)
     }
     
     # Charger les checkpoints pour les 5 DQN
@@ -129,7 +129,7 @@ def main():
     etape = 0
     en_cours = True
     
-    print("\n🔑 Commandes Clavier :")
+    print("\n[Commandes Clavier] :")
     print("   [ESPACE] : Mettre en pause / Reprendre")
     print("   [HAUT]   : Accélérer le jeu")
     print("   [BAS]    : Ralentir le jeu")
@@ -161,36 +161,60 @@ def main():
                         s['score_courant'] = 0
                         s['max_longueur'] = len(s['corps'])
                     print("[Arena] Statistiques réinitialisées.")
+                elif event.key in [pygame.K_p, pygame.K_PLUS, pygame.K_KP_PLUS, pygame.K_EQUALS]:
+                    jeu.nb_pommes = min(30, jeu.nb_pommes + 1)
+                    jeu.placer_nouvelle_pomme()
+                    print(f"[Arena] Nombre de pommes : {jeu.nb_pommes}")
+                elif event.key in [pygame.K_o, pygame.K_MINUS, pygame.K_KP_MINUS]:
+                    jeu.nb_pommes = max(1, jeu.nb_pommes - 1)
+                    if len(jeu.apples) > jeu.nb_pommes:
+                        jeu.apples.pop()
+                    print(f"[Arena] Nombre de pommes : {jeu.nb_pommes}")
+                else:
+                    touches_serpents = {
+                        pygame.K_1: 0, pygame.K_2: 1, pygame.K_3: 2, pygame.K_4: 3,
+                        pygame.K_5: 4, pygame.K_6: 5, pygame.K_7: 6, pygame.K_8: 7,
+                        pygame.K_KP1: 0, pygame.K_KP2: 1, pygame.K_KP3: 2, pygame.K_KP4: 3,
+                        pygame.K_KP5: 4, pygame.K_KP6: 5, pygame.K_KP7: 6, pygame.K_KP8: 7
+                    }
+                    if event.key in touches_serpents:
+                        sid = touches_serpents[event.key]
+                        s = jeu.snakes[sid]
+                        s['actif'] = not s.get('actif', True)
+                        if not s['actif']:
+                            s['corps'] = []
+                            s['score_courant'] = 0
+                        else:
+                            jeu.respawn_serpent(sid)
+                        print(f"[Arena] Serpent [{s['nom']}] est désormais {'ACTIF' if s['actif'] else 'INACTIF'}.")
                     
         if not en_pause:
             etape += 1
             
             # --- 1. Collecter les états initiaux pour chaque serpent ---
             etats_courants = {}
-            for sid, s in jeu.snakes.items():
-                if sid == 0 or sid == 1 or sid == 7:
-                    # États 11D
-                    etats_courants[sid] = jeu.get_11d_state(sid)
-                elif sid == 2:
-                    # Raycast 24D
-                    etats_courants[sid] = jeu.get_raycast_state(sid)
             
-            # Enregistrer l'état 11D avant mouvement pour tous les serpents (requis pour les buffers partagés)
-            etats_11d_tous = {}
+            # Enregistrer l'état 25D (grille de vision) avant mouvement pour tous les serpents (requis pour les buffers partagés)
+            etats_25d_tous = {}
             for sid in range(8):
-                etats_11d_tous[sid] = jeu.get_11d_state(sid)
+                if jeu.snakes[sid].get('actif', True):
+                    etats_25d_tous[sid] = jeu.get_vision_grid_state(sid)
                 
             for sid, s in jeu.snakes.items():
+                if not s.get('actif', True):
+                    continue
                 if sid in [0, 1, 4, 7]:
-                    # États 11D
-                    etats_courants[sid] = etats_11d_tous[sid]
+                    # États 25D
+                    etats_courants[sid] = etats_25d_tous[sid]
                 elif sid == 2:
-                    # Raycast 24D
+                    # Raycast 16D
                     etats_courants[sid] = jeu.get_raycast_state(sid)
             
             # --- 2. Choisir l'action pour chaque agent ---
             actions = {}
             for sid in range(8):
+                if not jeu.snakes[sid].get('actif', True):
+                    continue
                 if sid in [0, 1, 4, 7]:
                     actions[sid] = agents[sid].choisir_action(etats_courants[sid])
                 elif sid == 2:
@@ -203,79 +227,88 @@ def main():
             morts, recompenses = jeu.step(actions)
             
             # --- 4. Entraîner en continu les DQN ---
-            # Récupérer les états suivants après mouvement en 11D pour tout le monde
-            next_states_11d = {}
+            # Récupérer les états suivants après mouvement en 25D pour tout le monde
+            next_states_25d = {}
             for sid in range(8):
-                next_states_11d[sid] = jeu.get_11d_state(sid)
-            next_state_ray = jeu.get_raycast_state(2)
+                if jeu.snakes[sid].get('actif', True):
+                    next_states_25d[sid] = jeu.get_vision_grid_state(sid)
+            
+            next_state_ray = None
+            if jeu.snakes[2].get('actif', True):
+                next_state_ray = jeu.get_raycast_state(2)
             
             # Serpent 1 (Standard)
-            done1 = (0 in morts)
-            agents[0].memoriser(etats_courants[0], actions[0], recompenses[0], next_states_11d[0], done1)
-            for _ in range(4):
-                agents[0].entrainer()
-            if done1:
-                agents[0].fin_episode()
-                moy_std = jeu.obtenir_moyenne_10_vies(0)
-                agents[0].sauvegarder_si_meilleur(moy_std)
+            if jeu.snakes[0].get('actif', True):
+                done1 = (0 in morts)
+                agents[0].memoriser(etats_courants[0], actions[0], recompenses[0], next_states_25d[0], done1)
+                for _ in range(16):
+                    agents[0].entrainer()
+                if done1:
+                    agents[0].fin_episode()
+                    moy_std = jeu.obtenir_moyenne_10_vies(0)
+                    agents[0].sauvegarder_si_meilleur(moy_std)
                 
             # Serpent 2 (Profond)
-            done2 = (1 in morts)
-            agents[1].memoriser(etats_courants[1], actions[1], recompenses[1], next_states_11d[1], done2)
-            for _ in range(4):
-                agents[1].entrainer()
-            if done2:
-                agents[1].fin_episode()
-                moy_prof = jeu.obtenir_moyenne_10_vies(1)
-                agents[1].sauvegarder_si_meilleur(moy_prof)
+            if jeu.snakes[1].get('actif', True):
+                done2 = (1 in morts)
+                agents[1].memoriser(etats_courants[1], actions[1], recompenses[1], next_states_25d[1], done2)
+                for _ in range(16):
+                    agents[1].entrainer()
+                if done2:
+                    agents[1].fin_episode()
+                    moy_prof = jeu.obtenir_moyenne_10_vies(1)
+                    agents[1].sauvegarder_si_meilleur(moy_prof)
                 
             # Serpent 3 (Raycast)
-            done3 = (2 in morts)
-            agents[2].memoriser(etats_courants[2], actions[2], recompenses[2], next_state_ray, done3)
-            for _ in range(4):
-                agents[2].entrainer()
-            if done3:
-                agents[2].fin_episode()
-                moy_ray = jeu.obtenir_moyenne_10_vies(2)
-                agents[2].sauvegarder_si_meilleur(moy_ray)
+            if jeu.snakes[2].get('actif', True):
+                done3 = (2 in morts)
+                agents[2].memoriser(etats_courants[2], actions[2], recompenses[2], next_state_ray, done3)
+                for _ in range(16):
+                    agents[2].entrainer()
+                if done3:
+                    agents[2].fin_episode()
+                    moy_ray = jeu.obtenir_moyenne_10_vies(2)
+                    agents[2].sauvegarder_si_meilleur(moy_ray)
                 
-            # Trouver le meilleur serpent actuel du classement (basé sur la moyenne des 10 dernières vies)
+            # Trouver le meilleur serpent actuel du classement (basé sur la moyenne des 10 dernières vies et actif)
             meilleur_sid = None
             meilleure_moy = -1.0
             for sid, s in jeu.snakes.items():
-                moy_s = jeu.obtenir_moyenne_10_vies(sid)
-                if moy_s > meilleure_moy:
-                    meilleure_moy = moy_s
-                    meilleur_sid = sid
+                if s.get('actif', True):
+                    moy_s = jeu.obtenir_moyenne_10_vies(sid)
+                    if moy_s > meilleure_moy:
+                        meilleure_moy = moy_s
+                        meilleur_sid = sid
             
             # Serpent 5 (Élite - DQN Sélectif)
-            # Apprend de ses données ET de celles du meilleur serpent de la session
-            done4 = (4 in morts)
-            agents[4].memoriser(etats_courants[4], actions[4], recompenses[4], next_states_11d[4], done4)
-            if meilleur_sid is not None and meilleur_sid != 4:
-                done_best = (meilleur_sid in morts)
-                agents[4].memoriser(etats_11d_tous[meilleur_sid], actions[meilleur_sid], recompenses[meilleur_sid], next_states_11d[meilleur_sid], done_best)
-            
-            for _ in range(4):
-                agents[4].entrainer()
-            if done4:
-                agents[4].fin_episode()
-                moy_el = jeu.obtenir_moyenne_10_vies(4)
-                agents[4].sauvegarder_si_meilleur(moy_el)
+            if jeu.snakes[4].get('actif', True):
+                done4 = (4 in morts)
+                agents[4].memoriser(etats_courants[4], actions[4], recompenses[4], next_states_25d[4], done4)
+                if meilleur_sid is not None and meilleur_sid != 4:
+                    done_best = (meilleur_sid in morts)
+                    agents[4].memoriser(etats_25d_tous[meilleur_sid], actions[meilleur_sid], recompenses[meilleur_sid], next_states_25d[meilleur_sid], done_best)
+                
+                for _ in range(16):
+                    agents[4].entrainer()
+                if done4:
+                    agents[4].fin_episode()
+                    moy_el = jeu.obtenir_moyenne_10_vies(4)
+                    agents[4].sauvegarder_si_meilleur(moy_el)
                 
             # Serpent 8 (Collectif - DQN Partagé)
-            # Apprend des transitions 11D de tous les 8 serpents de l'arène
-            for sid in range(8):
-                done_sid = (sid in morts)
-                agents[7].memoriser(etats_11d_tous[sid], actions[sid], recompenses[sid], next_states_11d[sid], done_sid)
-            
-            for _ in range(4):
-                agents[7].entrainer()
-            done7 = (7 in morts)
-            if done7:
-                agents[7].fin_episode()
-                moy_col = jeu.obtenir_moyenne_10_vies(7)
-                agents[7].sauvegarder_si_meilleur(moy_col)
+            if jeu.snakes[7].get('actif', True):
+                for sid in range(8):
+                    if jeu.snakes[sid].get('actif', True):
+                        done_sid = (sid in morts)
+                        agents[7].memoriser(etats_25d_tous[sid], actions[sid], recompenses[sid], next_states_25d[sid], done_sid)
+                
+                for _ in range(16):
+                    agents[7].entrainer()
+                done7 = (7 in morts)
+                if done7:
+                    agents[7].fin_episode()
+                    moy_col = jeu.obtenir_moyenne_10_vies(7)
+                    agents[7].sauvegarder_si_meilleur(moy_col)
 
         # =============================================================================
         # RENDU GRAPHIQUE (Pygame)
@@ -297,6 +330,8 @@ def main():
             
         # --- 3. Dessiner les serpents ---
         for sid, s in jeu.snakes.items():
+            if not s.get('actif', True):
+                continue
             # Dessiner le corps (légèrement plus petit pour détacher les segments)
             for idx, (sx, sy) in enumerate(s['corps']):
                 is_head = (idx == 0)
@@ -369,7 +404,8 @@ def main():
                 'max_len': s['max_longueur'],
                 'moyenne': moyenne,
                 'eps': agents[sid].epsilon if sid in [0, 1, 2, 4, 7] else None,
-                'nb_donnees': agents[sid].total_transitions if sid in [0, 1, 2, 4, 7] else None
+                'nb_donnees': agents[sid].total_transitions if sid in [0, 1, 2, 4, 7] else None,
+                'actif': s.get('actif', True)
             })
             
         stats_serpents.sort(key=lambda x: (x['moyenne'], x['max_len']), reverse=True)
@@ -382,17 +418,20 @@ def main():
             fenetre.blit(num_txt, (LARGEUR_JEU + 15, y_offset))
             
             # Carré de couleur
-            pygame.draw.rect(fenetre, stat['color'], (
+            color_carre = stat['color'] if stat['actif'] else (60, 60, 60)
+            pygame.draw.rect(fenetre, color_carre, (
                 LARGEUR_JEU + 35, y_offset + 2, 10, 10
             ))
             
             # 2. Nom de l'architecture
             nom_txt = stat['nom']
-            # Ajouter epsilon pour les DQN
-            if stat['eps'] is not None:
+            if not stat['actif']:
+                nom_txt += " (OFF)"
+            elif stat['eps'] is not None:
                 nom_txt += f" (ε={stat['eps']:.2f})"
                 
-            nom_surf = police_normal_bold.render(nom_txt, True, BLANC)
+            color_texte = BLANC if stat['actif'] else GRIS_TEXTE
+            nom_surf = police_normal_bold.render(nom_txt, True, color_texte)
             fenetre.blit(nom_surf, (LARGEUR_JEU + 52, y_offset))
             
             # 3. Statistiques de performance
@@ -409,11 +448,13 @@ def main():
         
         # Astuces clavier
         note1 = police_normal.render("[ESPACE] : Pause/Reprise", True, GRIS_TEXTE)
-        note2 = police_normal.render("[HAUT/BAS] : Modifier vitesse (FPS)", True, GRIS_TEXTE)
-        note3 = police_normal.render("[R] : Réinitialiser les statistiques", True, GRIS_TEXTE)
-        fenetre.blit(note1, (LARGEUR_JEU + 15, 530))
-        fenetre.blit(note2, (LARGEUR_JEU + 15, 550))
-        fenetre.blit(note3, (LARGEUR_JEU + 15, 570))
+        note2 = police_normal.render("[HAUT/BAS] : FPS  |  [R] : Reset stats", True, GRIS_TEXTE)
+        note3 = police_normal.render(f"[+/-] ou [P/O] : +- Pommes (Actuel: {jeu.nb_pommes})", True, GRIS_TEXTE)
+        note4 = police_normal.render("[1-8] : Activer/Désactiver Serpents", True, GRIS_TEXTE)
+        fenetre.blit(note1, (LARGEUR_JEU + 15, 525))
+        fenetre.blit(note2, (LARGEUR_JEU + 15, 542))
+        fenetre.blit(note3, (LARGEUR_JEU + 15, 559))
+        fenetre.blit(note4, (LARGEUR_JEU + 15, 576))
         
         pygame.display.flip()
         

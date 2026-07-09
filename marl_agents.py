@@ -57,7 +57,7 @@ class DQNAgent:
         
         # Mémoire Replay
         self.memoire = deque(maxlen=20000)
-        self.taille_batch = 64
+        self.taille_batch = 256
         self.gamma = 0.99
         
         # Exploration
@@ -361,7 +361,7 @@ class StrategistAgent:
         # Trouver les opposants proches (distance de Manhattan <= 4)
         opposants_proches = []
         for opp_id, opp_s in game.snakes.items():
-            if opp_id == snake_id:
+            if opp_id == snake_id or not opp_s.get('actif', True):
                 continue
             opp_head = opp_s['corps'][0]
             d = abs(opp_head[0] - head[0]) + abs(opp_head[1] - head[1])
