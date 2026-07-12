@@ -125,3 +125,37 @@ Pour accélérer l'apprentissage initial des modèles DQN, vous pouvez pré-entr
    ```bash
    python marl_arena.py
    ```
+
+---
+
+## 🧪 État de l'Entraînement Continu (benchmarks)
+
+> **📌 Jusqu'où on est rendus (session 2026-07-10 → 12, Orange Pi 3B)**
+>
+> On a entraîné les 5 DQN (Standard, Profond, Raycast, Élite, Collectif) en RL continu sur l'arène 8 serpents. Pipeline : dataset imitation 200k (25D + Raycast 16D) → pré-entraînement BC → RL 24h headless avec checkpoints horaires + reprise (`RESUME=1`).
+>
+> **Optimisations appliquées** : 8 train/tick (×1.5 vitesse vs base), 1 thread torch (le multithread ralentit sur petits réseaux ARM), AMP bf16 désactivé (CPU Rockchip sans bf16).
+>
+> **Test A+B (reward shaping + curriculum DQN-vs-DQN puis mixte)** : les DQN montent à **Raycast 3.30 en solo** (vs 2.50 max avant), preuve que l'apprentissage est stabilisé. **Mais** dès que les experts réactivent, les DQN retombent à ~1 et se font écraser (Économiste 26, Stratège 13, Mathématicien 17).
+>
+> **Conclusion** : plafond **structurel** — vision locale 5×5 vs vision globale 40×40 des agents algorithmiques. A+B ne suffisent pas. Pour rivaliser il faudrait l'**option C** (entrée carte d'occupation 40×40 + positions têtes ennemies + CNN), plus lourde mais seul levier qui ferme l'écart.
+>
+> **Modèles livrés** (`models/`, à jour au 2026-07-12) : Raycast meilleur élève (moy. 8.0), les 4 autres ~6.5. Jouables en solo, dominés en mixte. Benchmarks dans `data/benchmark_curriculum.json`.
+
+---
+
+## 🚀 Entraînement Continu (headless, Orange Pi)
+
+Script d'entraînement 24h reprenable sans perte :
+```bash
+# Démarrage frais
+python run_24h.py
+
+# Reprise après coupure (skip Phase B, recharge poids + compte 24h)
+RESUME=1 python run_24h.py
+```
+Test curriculum A+B (3h) :
+```bash
+RESUME=1 python run_curriculum.py
+```
+Logs : `training_24h.log`, `training_curriculum.log`. Checkpoints horaires dans `models/`.

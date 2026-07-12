@@ -1,0 +1,35 @@
+{
+  "test": "Curriculum DQN-vs-DQN puis mixte (options A+B)",
+  "date": "2026-07-11/12",
+  "hardware": "Orange Pi 3B (ARM 4 coeurs, torch CPU, 1 thread)",
+  "duree_h": 3,
+  "options_testees": {
+    "A_reward_shaping": "Survie +0.05/tick, danger -2.0, bonus longueur +0.01*(len-3), conserve rapprochement +/-1",
+    "B_curriculum": "Phase 1 DQN-vs-DQN seul (4000 ticks), Phase 2 mixte avec experts actifs"
+  },
+  "resultats_dqn_solo_max": {
+    "raycast": 3.30,
+    "profond": 1.70,
+    "elite": 1.50,
+    "collectif": 1.30,
+    "standard": 1.10
+  },
+  "resultats_dqn_mixte_final": {
+    "raycast": 0.90,
+    "standard": 0.50,
+    "profond": 0.80,
+    "elite": 0.90,
+    "collectif": 1.30
+  },
+  "resultats_experts_mixte_final": {
+    "economiste": 26.00,
+    "mathematicien": 16.80,
+    "strategie": 12.50
+  },
+  "comparaison_base": {
+    "raycast_max_mixte_avant_A+B": 2.50,
+    "raycast_max_solo_avec_A+B": 3.30,
+    "ecart_experts_vs_dqn": "~10x"
+  },
+  "conclusion": "A+B stabilisent et accelerent l'apprentissage (Raycast 3.30 en solo vs 2.50 avant). Mais plafond structurel persistant : vision locale 5x5 vs vision globale 40x40 des experts. Les DQN restent ~10x sous les experts en mixte. Option C (vision globale + CNN) necessaire pour rivaliser."
+}

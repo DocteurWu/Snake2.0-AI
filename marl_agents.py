@@ -90,7 +90,8 @@ class DQNAgent:
         self.total_transitions += 1
         
     def entrainer(self):
-        """Effectue une étape d'apprentissage DQN sur un batch aléatoire."""
+        """Effectue une étape d'apprentissage DQN sur un batch aléatoire.
+        Utilise l'AMP bfloat16 (CPU) si disponible pour accelerer les matmul."""
         if len(self.memoire) < self.taille_batch:
             return
             

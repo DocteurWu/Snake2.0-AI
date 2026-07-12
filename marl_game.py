@@ -463,18 +463,30 @@ class MARLGame:
                     rewards[sid] = -10.0
                     continue
                     
-                # Récompense de rapprochement (Reward shaping)
+                # --- REWARD SHAPING ENRICHI (option A) ---
+                # 1. Bonus de survie : apprendre a ne pas crever prime sur la longevite
+                r = 0.05
+                # 2. Pénalité danger : la case d'après touche un corps ennemi -> risque de mort
+                danger = False
+                for other_id, other_s in self.snakes.items():
+                    if other_id == sid or not other_s.get('actif', True):
+                        continue
+                    if new_head in other_s['corps'][:-1]:
+                        danger = True
+                        break
+                if danger:
+                    r -= 2.0
+                # 3. Bonus proportionnel a la longueur atteinte (encourage la croissance)
+                r += 0.01 * (len(snake['corps']) - 3)
+                # 4. Récompense de rapprochement (Reward shaping original)
                 if self.apples:
                     closest_apple = min(self.apples, key=lambda a: abs(a[0] - new_head[0]) + abs(a[1] - new_head[1]))
                     dist_apres = abs(closest_apple[0] - new_head[0]) + abs(closest_apple[1] - new_head[1])
                     if dist_apres < dist_avant:
-                        rewards[sid] = 1.0
+                        r += 1.0
                     elif dist_apres > dist_avant:
-                        rewards[sid] = -1.0
-                    else:
-                        rewards[sid] = 0.0
-                else:
-                    rewards[sid] = 0.0
+                        r -= 1.0
+                rewards[sid] = r
                     
         # 4. Gérer les morts et les respawns
         for sid in dead_snakes:

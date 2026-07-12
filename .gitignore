@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.out
+*.log
+phase_c_start.txt
+gen_raycast.log
+bench.out
+bench2.out

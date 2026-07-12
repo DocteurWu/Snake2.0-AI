@@ -22,43 +22,39 @@ def train_imitation(epochs=15, batch_size=256, lr=0.001):
     print("     PRE-ENTRAINEMENT PAR IMITATION DES AGENTS DQN")
     print("=" * 70)
     
-    chemin_dataset = "data/imitation_dataset.pkl"
-    if not os.path.exists(chemin_dataset):
-        print(f"[!] Dataset introuvable : {chemin_dataset}")
-        print("    Veuillez d'abord exécuter : python generate_dataset.py")
-        return
-        
-    print(f"[Loader] Chargement du dataset depuis : {chemin_dataset} ...")
-    with open(chemin_dataset, "rb") as f:
-        dataset = pickle.load(f)
-        
-    print(f"[Loader] {len(dataset)} transitions chargées.")
-    
-    # Mélanger le dataset
-    np.random.shuffle(dataset)
-    
-    # Séparer entrées (états 25D) et cibles (actions 0, 1, 2)
-    etats = np.array([x[0] for x in dataset], dtype=np.float32)
-    actions = np.array([x[1] for x in dataset], dtype=np.int64)
-    
     device = torch.device("cpu")
     
-    # Configuration des 4 agents à entraîner avec la vision locale 25D
+    # Configuration des 5 agents a entraîner (4 en vision 25D, Raycast en 16D)
     modeles_config = {
-        "Standard": {"couches_cachees": [256, 128], "chemin": "models/marl_dqn_standard.pth"},
-        "Profond": {"couches_cachees": [256, 128, 64, 32], "chemin": "models/marl_dqn_profond.pth"},
-        "Elite": {"couches_cachees": [256, 128, 64, 32], "chemin": "models/marl_dqn_elite.pth"},
-        "Collectif": {"couches_cachees": [256, 128, 64, 32], "chemin": "models/marl_dqn_collectif.pth"}
+        "Standard": {"couches_cachees": [256, 128], "taille_entree": 25, "chemin": "models/marl_dqn_standard.pth", "dataset": "data/imitation_dataset.pkl"},
+        "Profond": {"couches_cachees": [256, 128, 64, 32], "taille_entree": 25, "chemin": "models/marl_dqn_profond.pth", "dataset": "data/imitation_dataset.pkl"},
+        "Raycast": {"couches_cachees": [256, 128], "taille_entree": 16, "chemin": "models/marl_dqn_raycast.pth", "dataset": "data/raycast_dataset.pkl"},
+        "Elite": {"couches_cachees": [256, 128, 64, 32], "taille_entree": 25, "chemin": "models/marl_dqn_elite.pth", "dataset": "data/imitation_dataset.pkl"},
+        "Collectif": {"couches_cachees": [256, 128, 64, 32], "taille_entree": 25, "chemin": "models/marl_dqn_collectif.pth", "dataset": "data/imitation_dataset.pkl"}
     }
     
     # Boucle d'entraînement pour chaque réseau
     for nom, config in modeles_config.items():
-        print(f"\n[Train] Agent [{nom}] (Architecture : {config['couches_cachees']})")
-        model = ReseauDQN(taille_entree=25, couches_cachees=config["couches_cachees"], taille_sortie=3).to(device)
-        
+        chemin_dataset = config["dataset"]
+        if not os.path.exists(chemin_dataset):
+            print(f"[!] Dataset introuvable pour [{nom}] : {chemin_dataset}")
+            print(f"    Veuillez d'abord exécuter le générateur correspondant.")
+            continue
+
+        print(f"\n[Train] Agent [{nom}] (Architecture : {config['couches_cachees']}, entree {config['taille_entree']}D)")
+        with open(chemin_dataset, "rb") as f:
+            dataset = pickle.load(f)
+        print(f"[Loader] {len(dataset)} transitions chargées depuis {chemin_dataset}.")
+
+        np.random.shuffle(dataset)
+        etats = np.array([x[0] for x in dataset], dtype=np.float32)
+        actions = np.array([x[1] for x in dataset], dtype=np.int64)
+
+        model = ReseauDQN(taille_entree=config["taille_entree"], couches_cachees=config["couches_cachees"], taille_sortie=3).to(device)
+
         optimizer = optim.Adam(model.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss()
-        
+
         num_samples = len(etats)
         
         for epoch in range(epochs):
@@ -104,7 +100,7 @@ def train_imitation(epochs=15, batch_size=256, lr=0.001):
         print(f"    [Saved] Poids et métadonnées sauvegardés pour [{nom}].")
 
     print("\n" + "=" * 70)
-    print("[OK] Pré-entraînement par imitation terminé pour les 4 agents !")
+    print("[OK] Pré-entraînement par imitation terminé pour les 5 agents !")
     print("=" * 70)
 
 if __name__ == "__main__":
